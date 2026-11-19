@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/gogpu/gg v0.52.6
 	github.com/gogpu/gogpu v0.54.1
+	github.com/gogpu/gpucontext v0.32.0
 	github.com/gogpu/ui v0.0.0
 )
 
@@ -12,7 +13,6 @@ require (
 	github.com/coregx/signals v0.1.1 // indirect
 	github.com/go-webgpu/goffi v0.6.8 // indirect
 	github.com/go-webgpu/webgpu v0.5.5 // indirect
-	github.com/gogpu/gpucontext v0.32.0 // indirect
 	github.com/gogpu/gputypes v0.8.2 // indirect
 	github.com/gogpu/naga v0.21.10 // indirect
 	github.com/gogpu/wgpu v0.34.14 // indirect

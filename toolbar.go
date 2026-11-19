@@ -9,6 +9,7 @@ import (
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
 	"github.com/gogpu/ui/icon"
+	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/theme/devtools"
 	"github.com/gogpu/ui/widget"
@@ -44,7 +45,7 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 	}
 	options := func(label string, enabled bool, fn func()) toolbar.Item {
 		item := action(label, icon.ExpChevronDown, enabled, fn)
-		item.Width = 16
+		item.Width = 20
 		return item
 	}
 	items := []toolbar.Item{toolbar.Spacer()}
@@ -75,14 +76,20 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 			w.showRemotesMenu(bar, index)
 		})
 		remotes.Enabled = !w.busy
-		remotes.Width = 94
+		remotes.Width = 100
 		items = append(items, remotes,
 			action("Refresh (F5)", icon.ExpRefresh, true, func() { w.refresh(w.filter) }),
 		)
 	}
-	items = append(items, action("Settings", icon.ExpSettings, true, func() { w.show("settings") }))
-	bar = toolbar.New(toolbar.Items(items...), toolbar.Height(28), toolbar.ButtonSize(30), toolbar.Gap(2),
-		toolbar.PainterOpt(actionToolbarPainter{w.paint.Toolbar}))
+	items = append(items,
+		action("Settings", icon.ExpSettings, true, func() { w.show("settings") }),
+		toolbar.Custom(primitives.Box().Width(4).Height(1)),
+	)
+	painter := w.paint.Toolbar
+	painter.IconSize = 20
+	bar = toolbar.New(toolbar.Items(items...), toolbar.Height(titleBarHeight),
+		toolbar.ButtonSize(32), toolbar.ButtonHeight(32), toolbar.Gap(6),
+		toolbar.PainterOpt(actionToolbarPainter{painter}))
 	return &toolbarHints{Widget: bar, hint: hint}
 }
 
@@ -109,7 +116,7 @@ func (w *workbench) showRemotesMenu(bar *toolbar.Widget, index int) {
 	}
 	bounds := bar.ItemBounds(index).Translate(bar.ScreenOrigin())
 	popup := menu.NewContextMenu(items, menu.ContextPainterOpt(w.paint.Menu))
-	popup.Show(w.ui.Window().Context(), geometry.Pt(bounds.Min.X, bounds.Max.Y+3))
+	popup.Show(w.ui.Window().Context(), geometry.Pt(bounds.Min.X, bar.ScreenBounds().Max.Y+3))
 }
 
 // Show the command name in the status bar on hover, including disabled actions.
@@ -122,15 +129,8 @@ func (t *toolbarHints) Event(ctx widget.Context, e event.Event) bool {
 	if mouse, ok := e.(*event.MouseEvent); ok {
 		switch mouse.MouseType {
 		case event.MouseEnter, event.MouseMove:
-			label := ""
 			point := mouse.Position.Sub(t.Bounds().Min)
-			for i := 0; i < t.ItemCount(); i++ {
-				if t.ItemBounds(i).Contains(point) {
-					label = t.ItemAt(i).Label
-					break
-				}
-			}
-			t.hint.Set(label)
+			t.hint.Set(t.ItemAt(t.HitTestItem(point)).Label)
 		case event.MouseLeave:
 			t.hint.Set("")
 		}
@@ -142,7 +142,7 @@ type actionToolbarPainter struct {
 	devtools.ToolbarPainter
 }
 
-// The workspace header already draws the toolbar's background and separator.
+// The title bar draws the shared background and separator.
 func (p actionToolbarPainter) PaintToolbar(widget.Canvas, toolbar.PaintToolbarState) {}
 
 func (p actionToolbarPainter) PaintButtonItem(canvas widget.Canvas, item toolbar.PaintButtonState) {

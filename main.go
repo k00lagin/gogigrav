@@ -17,6 +17,7 @@ import (
 	"github.com/gogpu/ui/app"
 	"github.com/gogpu/ui/core/datatable"
 	"github.com/gogpu/ui/core/textfield"
+	"github.com/gogpu/ui/core/titlebar"
 	"github.com/gogpu/ui/desktop"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/focus"
@@ -72,6 +73,7 @@ type workbench struct {
 	ratio       float32
 	table       *datatable.Widget
 	searchField *textfield.Widget
+	titleBar    *titlebar.Widget
 	searchOpen  bool
 	focusSearch bool
 	rows        []repo.Commit
@@ -106,9 +108,11 @@ func main() {
 	defer cancel()
 	w := &workbench{ctx: ctx, prefs: prefs, done: make(chan func(), 1), dirty: true, page: "open", ratio: 0.65, drafts: map[string]string{}, selected: state.NewSignal(0), filter: repo.Filter{Remote: true, Limit: 250}}
 	w.setTheme()
-	w.host = gogpu.NewApp(gogpu.DefaultConfig().WithTitle("Gogigrav").WithSize(1280, 760).WithMinSize(950, 520))
+	w.host = gogpu.NewApp(gogpu.DefaultConfig().
+		WithTitle("Gogigrav").WithSize(1280, 760).WithMinSize(1080, 520).WithFrameless(true))
 	w.ui = app.New(app.WithWindowProvider(w.host), app.WithPlatformProvider(w.host), app.WithEventSource(w.host.EventSource()), app.WithTheme(w.theme.AsTheme()))
 	w.render()
+	w.host.SetHitTestCallback(w.hitTestWindow)
 	shortcuts := w.ui.Window().FocusManager()
 	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyF, Ctrl: true}, w.showSearch)
 	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyO, Ctrl: true}, func() { w.show("open") })

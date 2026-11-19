@@ -78,7 +78,7 @@ func (w *workbench) render() {
 			w.open(w.prefs.Recent[i])
 		}
 	})
-	header := []widget.Widget{primitives.VBox(picker).Width(184).Height(30)}
+	header := []widget.Widget{primitives.VBox(picker).Width(160).Height(30)}
 	active := w.path != ""
 	if active {
 		refs := []string{""}
@@ -90,7 +90,7 @@ func (w *workbench) render() {
 			refs = append(refs, r)
 			branches = append(branches, shortRef(r))
 		}
-		header = append(header, primitives.VBox(w.pick("Branches", branches, slices.Index(refs, w.filter.Ref), func(i int) { f := w.filter; f.Ref = refs[i]; w.refresh(f) })).Width(167).Height(30),
+		header = append(header, primitives.VBox(w.pick("Branches", branches, slices.Index(refs, w.filter.Ref), func(i int) { f := w.filter; f.Ref = refs[i]; w.refresh(f) })).Width(142).Height(30),
 			w.check("Remote branches", w.filter.Remote, true, func(v bool) {
 				f := w.filter
 				f.Remote = v
@@ -101,7 +101,7 @@ func (w *workbench) render() {
 			}))
 	}
 	hint := state.NewSignal("")
-	header = append(header, primitives.Expanded(w.actionToolbar(hint)))
+	w.titleBar = w.newTitleBar(row(header...).PaddingLeft(4), w.actionToolbar(hint))
 	w.searchField = nil
 	var body widget.Widget
 	if active {
@@ -132,7 +132,7 @@ func (w *workbench) render() {
 	}
 	footer := row(primitives.Expanded(w.muted(state).MaxLines(1).Ellipsis()),
 		w.muted("").ContentSignal(hint).MaxLines(1).Ellipsis(), w.muted(w.path).MaxLines(1).Ellipsis()).PaddingXY(10, 4).Background(cs.Surface)
-	w.ui.SetRoot(primitives.VBox(row(header...).PaddingXY(8, 4).Background(cs.Surface), line(w), primitives.Expanded(body), line(w), footer).Background(cs.Background))
+	w.ui.SetRoot(primitives.VBox(w.titleBar, primitives.Expanded(body), line(w), footer).Background(cs.Background))
 	if w.focusSearch && w.searchField != nil {
 		w.focusSearch = false
 		w.ui.Window().Context().RequestFocus(w.searchField)
