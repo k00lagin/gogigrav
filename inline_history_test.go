@@ -20,6 +20,7 @@ func TestUnifiedCommitFileTreeScroll(t *testing.T) {
 	testGit(t, path, "init", "-b", "main")
 	testGit(t, path, "config", "user.name", "Tester")
 	testGit(t, path, "config", "user.email", "tester@example.test")
+	testGit(t, path, "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Initial commit")
 	for i := range 48 {
 		name := filepath.Join(path, fmt.Sprintf("file%02d.txt", i))
 		if err := os.WriteFile(name, []byte("example"), 0600); err != nil {

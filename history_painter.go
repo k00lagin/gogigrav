@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/gogpu/ui/core/datatable"
@@ -9,15 +10,17 @@ import (
 	"github.com/gogpu/ui/icon"
 	"github.com/gogpu/ui/theme/devtools"
 	"github.com/gogpu/ui/widget"
+	"gogigrav/internal/repo"
 )
 
 const historyDescription = "Description"
 
-// A ref shares the description cell with the subject. Reserve space for the
-// message even when many branches point to the same commit.
+var historyTag = icon.FromSVG("history-tag", 12, "M1 1 H6 L11 6 L6 11 L1 6 Z M2 2 V5.6 L6 9.6 L9.6 6 L5.6 2 Z M3 3 H4.5 V4.5 H3 Z")
+
 type historyPainter struct {
 	devtools.DataTablePainter
-	bench *workbench
+	bench   *workbench
+	columns []datatable.Column
 }
 
 func (p historyPainter) PaintHeaderCell(canvas widget.Canvas, bounds geometry.Rect, state datatable.HeaderCellPaintState) {
@@ -27,52 +30,168 @@ func (p historyPainter) PaintHeaderCell(canvas widget.Canvas, bounds geometry.Re
 			icon.Draw(canvas, branchIcon, geometry.NewRect(bounds.Min.X+6, bounds.Center().Y-8, 16, 16), p.bench.theme.Colors.OnSurface)
 		}
 		bounds.Min.X += gutter
+	} else {
+		x := bounds.Min.X
+		canvas.DrawLine(geometry.Pt(x, bounds.Min.Y+8), geometry.Pt(x, bounds.Max.Y-8), p.bench.theme.Colors.Border, 1)
 	}
 	p.DataTablePainter.PaintHeaderCell(canvas, bounds, state)
 }
 
+func summaryText(s repo.ChangeSummary) string {
+	return fmt.Sprintf("%d   +%d   −%d", s.Files, s.Added, s.Deleted)
+}
+
 func (p historyPainter) PaintCell(canvas widget.Canvas, cell datatable.CellPaintState) {
-	if cell.ColIndex == 0 {
-		width := min(cell.Bounds.Width(), p.bench.graph.width())
-		bounds := geometry.NewRect(cell.Bounds.Min.X, cell.Bounds.Min.Y, width, cell.Bounds.Height())
-		background := p.bench.theme.Colors.Background
-		if cell.Selected {
-			background = p.bench.theme.Colors.Selection
+	w := p.bench
+	row := cell.RowIndex - w.uncommittedRowCount()
+	if p.columns[cell.ColIndex].Key == "diff" {
+		summary := w.data.WorkDiff
+		if row >= 0 && row < len(w.rows) {
+			summary = w.rows[row].Diff
 		}
-		p.bench.paintGraphRow(canvas, bounds, cell.RowIndex, background)
+		paintChangeSummary(canvas, cell.Bounds, summary, w.theme.Colors)
+		return
+	}
+	if cell.ColIndex == 0 {
+		width := min(cell.Bounds.Width(), w.graph.width())
+		bounds := geometry.NewRect(cell.Bounds.Min.X, cell.Bounds.Min.Y, width, cell.Bounds.Height())
+		background := w.theme.Colors.Background
+		if cell.Selected {
+			background = w.theme.Colors.Selection
+		}
+		w.paintGraphRow(canvas, bounds, cell.RowIndex, background)
 		cell.Bounds.Min.X += width
 		if cell.Bounds.IsEmpty() {
 			return
 		}
-	}
-	row := cell.RowIndex - p.bench.uncommittedRowCount()
-	if cell.ColIndex == 0 && row >= 0 && row < len(p.bench.rows) {
-		refs := p.bench.rows[row].Refs
-		if refs != "" {
-			first, rest, _ := strings.Cut(refs, ", ")
-			cs := p.bench.theme.Colors
-			fg := cs.Success
-			switch {
-			case strings.HasPrefix(first, "HEAD -> "):
-				first = strings.TrimPrefix(first, "HEAD -> ")
-				fg = cs.Primary
-			case strings.HasPrefix(first, "tag: "):
-				first = strings.TrimPrefix(first, "tag: ")
-				fg = cs.Warning
+		if row >= 0 && row < len(w.rows) {
+			color := w.theme.Colors.Primary
+			if cell.RowIndex < len(w.graph.rows) {
+				color = w.graphPalette[w.graph.rows[cell.RowIndex].color]
 			}
-			if rest != "" {
-				first += fmt.Sprintf("  +%d", strings.Count(rest, ", ")+1)
-			}
-			width := min(canvas.MeasureText(first, 12, false)+12, cell.Bounds.Width()*0.45)
-			badge := geometry.NewRect(cell.Bounds.Min.X+8, cell.Bounds.Center().Y-9, width, 18)
-			canvas.DrawRoundRect(badge, fg.WithAlpha(0.12), 3)
-			canvas.StrokeRoundRect(badge, fg.WithAlpha(0.65), 3, 1)
-			textBounds := geometry.NewRect(badge.Min.X+5, badge.Min.Y, max(0, width-10), 18)
-			canvas.PushClip(textBounds)
-			canvas.DrawText(first, textBounds, 12, cs.OnSurface, false, widget.TextAlignLeft)
-			canvas.PopClip()
-			cell.Bounds.Min.X = badge.Max.X
+			cell.Bounds.Min.X = paintHistoryRefs(canvas, cell.Bounds, w.historyRefs(w.rows[row]), color, w.theme.Colors.OnSurface)
 		}
 	}
 	p.DataTablePainter.PaintCell(canvas, cell)
+}
+
+func paintChangeSummary(canvas widget.Canvas, bounds geometry.Rect, summary repo.ChangeSummary, cs devtools.ColorScheme) {
+	canvas.PushClip(bounds)
+	defer canvas.PopClip()
+	x := bounds.Min.X + 8
+	for i, part := range []string{fmt.Sprint(summary.Files), fmt.Sprintf("+%d", summary.Added), fmt.Sprintf("−%d", summary.Deleted)} {
+		width := canvas.MeasureText(part, 11, false)
+		text := geometry.NewRect(x, bounds.Center().Y-8, width+2, 16)
+		color := cs.OnSurface
+		switch i {
+		case 0:
+			canvas.DrawRoundRect(geometry.NewRect(x-3, text.Min.Y, width+8, 16), cs.Border, 3)
+		case 1:
+			color = cs.Success
+		case 2:
+			color = cs.Error
+		}
+		canvas.DrawText(part, text, 11, color, false, widget.TextAlignLeft)
+		x += width + 10
+	}
+}
+
+type historyRef struct {
+	text, remote string
+	glyph        icon.IconData
+	current      bool
+}
+
+func (w *workbench) historyRefs(c repo.Commit) []historyRef {
+	refs := w.data.RefsByCommit[c.Hash]
+	var labels []historyRef
+	current := repo.LocalRefPrefix + w.data.CurrentBranch()
+	if c.Hash == w.data.Head && w.data.CurrentBranch() == "" {
+		labels = append(labels, historyRef{text: "HEAD", glyph: icon.Check, current: true})
+	}
+	absorbed := make(map[string]bool)
+	for _, ref := range refs {
+		if !strings.HasPrefix(ref.Name, repo.LocalRefPrefix) {
+			continue
+		}
+		name := shortRef(ref.Name)
+		label := historyRef{text: name, glyph: branchIcon, current: ref.Name == current}
+		if label.current {
+			label.glyph = icon.Check
+		}
+		if w.filter.Remote {
+			for _, remote := range refs {
+				remoteName, ok := strings.CutPrefix(remote.Name, repo.RemoteRefPrefix)
+				if !ok || absorbed[remote.Name] {
+					continue
+				}
+				server, branch, _ := strings.Cut(remoteName, "/")
+				if remote.Name == ref.Upstream || (ref.Upstream == "" && branch == name) {
+					absorbed[remote.Name] = true
+					label.remote = server
+					break
+				}
+			}
+		}
+		if label.current {
+			labels = append([]historyRef{label}, labels...)
+		} else {
+			labels = append(labels, label)
+		}
+	}
+	for _, ref := range refs {
+		if w.filter.Remote && strings.HasPrefix(ref.Name, repo.RemoteRefPrefix) && !absorbed[ref.Name] {
+			labels = append(labels, historyRef{text: shortRef(ref.Name), glyph: remotesIcon})
+		}
+	}
+	if !w.filter.HideTags {
+		for _, ref := range refs {
+			if name, ok := strings.CutPrefix(ref.Name, "refs/tags/"); ok {
+				labels = append(labels, historyRef{text: name, glyph: historyTag})
+			}
+		}
+	}
+	if !w.filter.HideStashes && len(w.filter.VisibleRefs()) == 0 {
+		if i := slices.IndexFunc(w.data.Stashes, func(s repo.Stash) bool { return s.Hash == c.Hash }); i >= 0 {
+			labels = append(labels, historyRef{text: w.data.Stashes[i].Selector, glyph: stashIcon})
+		}
+	}
+	return labels
+}
+
+func paintHistoryRefs(canvas widget.Canvas, bounds geometry.Rect, labels []historyRef, color, foreground widget.Color) float32 {
+	x := bounds.Min.X
+	right := bounds.Max.X - 62
+	for _, label := range labels {
+		left := x + 6
+		if right-left < 26 {
+			break
+		}
+		textWidth := canvas.MeasureText(label.text, 11, label.current)
+		baseWidth := 24 + textWidth
+		remoteWidth := float32(0)
+		if label.remote != "" {
+			remoteWidth = 30 + canvas.MeasureText(label.remote, 11, false)
+		}
+		badge := geometry.NewRect(left, bounds.Center().Y-9, min(right-left, baseWidth+remoteWidth), 18)
+		alpha := float32(.12)
+		if label.current {
+			alpha = .27
+		}
+		canvas.DrawRoundRect(badge, color.WithAlpha(alpha), 4)
+		canvas.StrokeRoundRect(badge, color.WithAlpha(.72), 4, 1)
+		canvas.PushClip(badge)
+		icon.Draw(canvas, label.glyph, geometry.NewRect(left+4, badge.Min.Y+3, 12, 12), foreground)
+		canvas.DrawText(label.text, geometry.NewRect(left+20, badge.Min.Y, max(0, badge.Width()-22), 18), 11, foreground, label.current, widget.TextAlignLeft)
+		if remoteWidth > 0 && left+baseWidth+24 < badge.Max.X {
+			segment := geometry.NewRect(left+baseWidth, badge.Min.Y, badge.Width()-baseWidth, 18)
+			canvas.DrawRect(segment, color.WithAlpha(.19))
+			canvas.DrawText("⇄", geometry.NewRect(segment.Min.X+2, badge.Min.Y, 12, 18), 11, foreground, false, widget.TextAlignLeft)
+			icon.Draw(canvas, remotesIcon, geometry.NewRect(segment.Min.X+14, badge.Min.Y+3, 12, 12), foreground)
+			canvas.DrawText(label.remote, geometry.NewRect(segment.Min.X+28, badge.Min.Y, max(0, segment.Width()-30), 18), 11, foreground, false, widget.TextAlignLeft)
+		}
+		canvas.PopClip()
+		x = badge.Max.X
+	}
+	return x
 }

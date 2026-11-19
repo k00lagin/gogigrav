@@ -99,7 +99,10 @@ func (f File) Unstaged() bool { return f.Conflicted || f.Work != ' ' }
 type Commit struct {
 	Hash, Parents, Author, Email, Date, Refs, Subject, Body string
 	Committer, CommitterEmail, CommitDate                   string
+	Diff                                                    ChangeSummary
 }
+
+type Ref struct{ Name, Upstream string }
 
 func (c Commit) Short() string { return c.Hash[:min(8, len(c.Hash))] }
 
@@ -112,8 +115,10 @@ type Snapshot struct {
 	UpstreamRemote, UpstreamRef string
 	Ahead, Behind               int
 	Branches, Remotes           []string
+	RefsByCommit                map[string][]Ref
 	Stashes                     []Stash
 	Files                       []File
+	WorkDiff                    ChangeSummary
 	Commits                     []Commit
 	More                        bool
 	Revision                    [sha256.Size]byte
@@ -161,7 +166,7 @@ func LoadIfChanged(ctx context.Context, dir string, f Filter, previous [sha256.S
 	if err != nil {
 		return s, false, err
 	}
-	refs, err := git("for-each-ref", "--format=%(refname)%00%(symref)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(objectname)", "refs/heads", "refs/remotes", "refs/tags")
+	refs, err := git("for-each-ref", "--format=%(refname)%00%(symref)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(objectname)%00%(*objectname)%00%(upstream)", "refs/heads", "refs/remotes", "refs/tags")
 	if err != nil {
 		return s, false, err
 	}
@@ -180,13 +185,38 @@ func LoadIfChanged(ctx context.Context, dir string, f Filter, previous [sha256.S
 	if err != nil {
 		return s, false, err
 	}
-	s.Revision = sha256.Sum256([]byte(strings.Join([]string{status, refs, remotes, stashes, indexStats, workStats}, "\x00")))
+	counts := []string{indexStats, workStats}
+	var netStats string
+	if s.Head != "" && indexStats != "" && workStats != "" {
+		netStats, err = git("diff", "--numstat", "-z", "-M", "--no-ext-diff", "--no-textconv", "HEAD", "--")
+		if err != nil {
+			return s, false, err
+		}
+		counts = []string{netStats}
+	}
+	s.WorkDiff.Files = len(s.Files)
+	for _, raw := range counts {
+		for _, stat := range parseNumstat(raw) {
+			s.WorkDiff.Added += stat.Added
+			s.WorkDiff.Deleted += stat.Deleted
+		}
+	}
+	s.Revision = sha256.Sum256([]byte(strings.Join([]string{status, refs, remotes, stashes, indexStats, workStats, netStats}, "\x00")))
 	if s.Revision == previous {
 		return s, false, nil
 	}
+	s.RefsByCommit = make(map[string][]Ref)
 	for _, line := range lines(refs) {
 		fields := strings.Split(line, "\x00")
-		if len(fields) != 5 || fields[1] != "" || strings.HasPrefix(fields[0], "refs/tags/") {
+		if len(fields) != 7 || fields[1] != "" {
+			continue
+		}
+		hash := fields[4]
+		if fields[5] != "" {
+			hash = fields[5]
+		}
+		s.RefsByCommit[hash] = append(s.RefsByCommit[hash], Ref{Name: fields[0], Upstream: fields[6]})
+		if strings.HasPrefix(fields[0], "refs/tags/") {
 			continue
 		}
 		s.Branches = append(s.Branches, fields[0])
@@ -278,10 +308,11 @@ func LoadHistory(ctx context.Context, dir string, s Snapshot, f Filter) ([]Commi
 	if len(stashHashes) != 0 {
 		commits = hideStashHelpers(commits, stashHashes)
 	}
-	if len(commits) > f.Limit {
-		return commits[:f.Limit], true, nil
+	more := len(commits) > f.Limit
+	if more {
+		commits = commits[:f.Limit]
 	}
-	return commits, false, nil
+	return commits, more, readCommitStats(ctx, dir, commits)
 }
 
 func hideStashHelpers(commits []Commit, stashes map[string]bool) []Commit {

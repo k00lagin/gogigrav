@@ -114,6 +114,11 @@ type toolbarHints struct {
 }
 
 func (t *toolbarHints) Event(ctx widget.Context, e event.Event) bool {
+	if key, ok := e.(*event.KeyEvent); ok && t.repoPath != "" && (ctx.IsFocused(t) || ctx.IsFocused(t.Widget)) && isContextMenuKey(key) {
+		bounds := t.ItemBounds(0).Translate(t.ScreenOrigin())
+		t.bench.repositoryMenu(t.bench.path, geometry.Pt(bounds.Min.X, bounds.Max.Y))
+		return true
+	}
 	if mouse, ok := e.(*event.MouseEvent); ok {
 		switch mouse.MouseType {
 		case event.MouseEnter, event.MouseMove:
@@ -131,7 +136,9 @@ func (t *toolbarHints) Event(ctx widget.Context, e event.Event) bool {
 			if mouse.Buttons != 0 || index < 0 || item.Kind != toolbar.ItemButton {
 				label = ""
 			}
-			t.bench.hoverToolbarItem(t, index, label)
+			t.bench.hoverToolbarItem(t, index, label, func() geometry.Rect {
+				return t.ItemBounds(index).Translate(t.ScreenOrigin())
+			}, popover.BottomStart)
 		case event.MouseLeave:
 			t.hint.Set("")
 			if t.bench.toolbarHover.bar == t {

@@ -99,7 +99,7 @@ func TestTreeOpensNativeMenuAndPreview(t *testing.T) {
 	if w.viewer.err != nil || len(w.viewer.rows) != 2 {
 		t.Fatalf("untracked preview: %+v", w.viewer)
 	}
-	w.previewSplit = true
+	w.prefs.Settings.SplitDiff = true
 	w.previewWrap = true
 	w.previewSidebar = true
 	testActionFrame(w)

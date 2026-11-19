@@ -97,7 +97,7 @@ func (w *workbench) render() {
 		if w.table == nil {
 			w.table = w.historyTable()
 		}
-		history := primitives.VBox(historyBar, line(w), primitives.Expanded(w.table)).Background(cs.Background)
+		history := primitives.VBox(historyBar, line(w), primitives.Expanded(w.historyHeader)).Background(cs.Background)
 		detailRow := w.syncInlineDetails()
 		if w.revealInline && detailRow >= 0 {
 			w.table.ScrollToRow(detailRow)
@@ -192,7 +192,7 @@ func relativeDate(date, now time.Time) string {
 }
 
 func (w *workbench) uncommittedRowCount() int {
-	if w.prefs.Settings.HideUncommitted {
+	if w.prefs.Settings.HideUncommitted || len(w.data.Files) == 0 {
 		return 0
 	}
 	return 1
@@ -211,16 +211,20 @@ func (w *workbench) commitAuthor(c repo.Commit) string {
 }
 
 func (w *workbench) historyTable() *datatable.Widget {
-	authorWidth := float32(106)
-	if w.prefs.Settings.ShowCommitter {
-		authorWidth = 190
+	cols := []datatable.Column{{Key: "description", Title: historyDescription, MinWidth: 120}}
+	for _, col := range historyColumns {
+		if !w.prefs.Columns.Hidden[col.Key] {
+			cols = append(cols, col)
+		}
 	}
-	cols := []datatable.Column{{Key: "description", Title: historyDescription, MinWidth: 120}, {Key: "date", Title: "Date", Width: 126}, {Key: "author", Title: "Author", Width: authorWidth}, {Key: "hash", Title: "Commit", Width: 82}}
-	return datatable.New(datatable.Columns(cols), datatable.RowCountFn(func() int { return len(w.rows) + w.uncommittedRowCount() }), datatable.RowHeight(27), datatable.PainterOpt(historyPainter{w.paint.DataTable, w}), datatable.SelectedRowSignal(w.selected), datatable.SelectionModeOpt(datatable.SelectionSingle), datatable.A11yLabel("Commit history"), datatable.CellValue(func(i int, k string) string {
+	table := datatable.New(datatable.Columns(cols), datatable.RowCountFn(func() int { return len(w.rows) + w.uncommittedRowCount() }), datatable.RowHeight(27), datatable.PainterOpt(historyPainter{DataTablePainter: w.paint.DataTable, bench: w, columns: cols}), datatable.SelectedRowSignal(w.selected), datatable.SelectionModeOpt(datatable.SelectionSingle), datatable.A11yLabel("Commit history"), datatable.CellValue(func(i int, k string) string {
 		i -= w.uncommittedRowCount()
 		if i == -1 {
 			if k == "description" {
 				return fmt.Sprintf("Uncommitted Changes (%d)", len(w.data.Files))
+			}
+			if k == "diff" {
+				return summaryText(w.data.WorkDiff)
 			}
 			return ""
 		}
@@ -229,6 +233,8 @@ func (w *workbench) historyTable() *datatable.Widget {
 		}
 		c := w.rows[i]
 		switch k {
+		case "diff":
+			return summaryText(c.Diff)
 		case "date":
 			return w.commitDate(c)
 		case "author":
@@ -244,6 +250,8 @@ func (w *workbench) historyTable() *datatable.Widget {
 			w.selectHistoryRow(i)
 		}
 	}))
+	w.historyHeader = &historyHeader{BoxWidget: primitives.VBox(primitives.Expanded(table)), bench: w, columns: cols}
+	return table
 }
 
 func (w *workbench) selectHistoryRow(row int) {

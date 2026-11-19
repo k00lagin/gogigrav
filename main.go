@@ -18,7 +18,6 @@ import (
 	"github.com/gogpu/ui/core/datatable"
 	"github.com/gogpu/ui/core/popover"
 	"github.com/gogpu/ui/core/textfield"
-	"github.com/gogpu/ui/core/titlebar"
 	"github.com/gogpu/ui/desktop"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/focus"
@@ -32,6 +31,7 @@ type preferences struct {
 	Light    bool
 	Recent   []string
 	Settings viewSettings
+	Columns  columnLayout
 }
 
 func configPath() string {
@@ -90,7 +90,7 @@ type workbench struct {
 	ratio        float32
 	table        *datatable.Widget
 	searchField  *textfield.Widget
-	titleBar     *titlebar.Widget
+	titleBar     *workbenchTitleBar
 	openPopup    *popover.Popover
 	popupIcon    string
 	popupAction  func()
@@ -109,7 +109,10 @@ type workbench struct {
 	form         *actionForm
 	amend        bool
 
-	previewWrap, previewSplit, previewSidebar bool
+	historyHeader    *historyHeader
+	repoSearchCancel context.CancelFunc
+
+	previewWrap, previewSidebar bool
 
 	inlineClosed  bool
 	inlineContent widget.Widget
@@ -325,7 +328,7 @@ func (w *workbench) open(path string) {
 			w.form = nil
 			w.file = nil
 			w.commit = repo.Commit{}
-			w.prefs.Recent = append([]string{path}, slices.DeleteFunc(w.prefs.Recent, func(p string) bool { return p == path })...)
+			w.prefs.Recent = append([]string{path}, slices.DeleteFunc(w.prefs.Recent, func(p string) bool { return sameRepositoryPath(p, path) })...)
 			w.prefs.save(w.settingsPath)
 			w.filterRows()
 			w.scheduleAutoRefresh()

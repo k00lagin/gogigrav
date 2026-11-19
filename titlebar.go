@@ -3,17 +3,32 @@ package main
 import (
 	"github.com/gogpu/gpucontext"
 	"github.com/gogpu/ui/core/titlebar"
+	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/theme/devtools"
 	"github.com/gogpu/ui/widget"
 )
 
 const titleBarHeight = 42
 
-func (w *workbench) newTitleBar(selectors, actions widget.Widget) *titlebar.Widget {
+type workbenchTitleBar struct {
+	*titlebar.Widget
+	bench *workbench
+}
+
+func (bar *workbenchTitleBar) Event(ctx widget.Context, e event.Event) bool {
+	if mouse, ok := e.(*event.MouseEvent); ok && mouse.MouseType == event.MousePress && mouse.Button == event.ButtonRight {
+		if bar.bench.repositoryTriggerMenu(mouse.GlobalPosition) {
+			return true
+		}
+	}
+	return bar.Widget.Event(ctx, e)
+}
+
+func (w *workbench) newTitleBar(selectors, actions widget.Widget) *workbenchTitleBar {
 	chromeTheme := *w.theme
 	chromeTheme.Colors.HeaderBackground = w.theme.Colors.Surface
 	chromeTheme.Colors.HeaderForeground = w.theme.Colors.OnSurface
-	return titlebar.New(
+	bar := titlebar.New(
 		titlebar.Title("Gogigrav"),
 		titlebar.Height(titleBarHeight),
 		titlebar.Leading(selectors),
@@ -21,6 +36,7 @@ func (w *workbench) newTitleBar(selectors, actions widget.Widget) *titlebar.Widg
 		titlebar.Chrome(w.host),
 		titlebar.PainterOpt(devtools.TitleBarPainter{Theme: &chromeTheme}),
 	)
+	return &workbenchTitleBar{Widget: bar, bench: w}
 }
 
 // hitTestWindow reserves the frame edges for resize and the empty title-bar

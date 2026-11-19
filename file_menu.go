@@ -168,7 +168,9 @@ func revealFile(path string) error {
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "windows":
-		if _, err := os.Lstat(path); err == nil {
+		if info, err := os.Lstat(path); err == nil && info.IsDir() {
+			cmd = exec.Command("explorer.exe", path)
+		} else if err == nil {
 			cmd = exec.Command("explorer.exe", "/select,", path)
 		} else {
 			cmd = exec.Command("explorer.exe", parent)

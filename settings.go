@@ -28,6 +28,7 @@ type viewSettings struct {
 	DateFormat         string
 	CommitDate         bool
 	UnifiedDetails     bool
+	SplitDiff          bool
 	ShowCommitter      bool
 	DisablePrune       bool
 	ImportedTheme      *importedTheme `json:",omitempty"`
@@ -141,12 +142,11 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 		check("Auto refresh", "Reload history when the repository changes on disk.", !next.DisableAutoRefresh, func(on bool) { next.DisableAutoRefresh = !on }),
 	)
 	dateFormats := []string{"datetime", "date", "relative"}
-	diff := dropdown.New(dropdown.Items("Unified", "Split"), dropdown.Selected(0), dropdown.Disabled(true), dropdown.PainterOpt(w.paint.Dropdown))
 	display := section("Display",
 		chosen("Date format", []string{"Date & time", "Date only", "Relative"}, slices.Index(dateFormats, next.DateFormat), func(i int) { next.DateFormat = dateFormats[i] }),
 		chosen("Date type", []string{"Author date", "Commit date"}, boolIndex(next.CommitDate), func(i int) { next.CommitDate = i == 1 }),
 		chosen("Commit view", []string{"Split", "Unified"}, boolIndex(next.UnifiedDetails), func(i int) { next.UnifiedDetails = i == 1 }),
-		row(label("Diff view"), primitives.VBox(diff).Width(110).Height(28), hint("Unavailable")),
+		chosen("Diff view", []string{"Unified", "Split"}, boolIndex(next.SplitDiff), func(i int) { next.SplitDiff = i == 1 }),
 		check("Show committer", "Show the committer next to the author when they differ.", next.ShowCommitter, func(on bool) { next.ShowCommitter = on }),
 	)
 

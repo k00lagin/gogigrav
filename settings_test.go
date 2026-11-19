@@ -97,6 +97,13 @@ func TestSettingsDialogInputAndPersistence(t *testing.T) {
 	if offset <= 0 {
 		t.Fatal("cannot scroll to the Repository section on a small window")
 	}
+	diffPicker := dropdowns[len(dropdowns)-2]
+	diffPicker.Open(win.Context())
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyDown, 0, event.ModNone))
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
+	if !w.prefs.Settings.SplitDiff || win.OverlayCount() != 1 {
+		t.Fatal("Diff view did not apply while settings were open")
+	}
 	themePicker := dropdowns[len(dropdowns)-1]
 	testClick(w, themePicker.ScreenBounds().Center())
 	if win.OverlayCount() != 2 {
@@ -129,7 +136,7 @@ func TestSettingsDialogInputAndPersistence(t *testing.T) {
 	}
 	var saved preferences
 	if err := json.Unmarshal(data, &saved); err != nil || !saved.Light || saved.Settings.InitialCommits != 100 ||
-		!saved.Settings.HideRemotes || !saved.Settings.HideUncommitted {
+		!saved.Settings.HideRemotes || !saved.Settings.HideUncommitted || !saved.Settings.SplitDiff {
 		t.Fatalf("preferences on disk before closing = %+v, err = %v", saved, err)
 	}
 	testClick(w, buttons[2].ScreenBounds().Center())

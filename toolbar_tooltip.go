@@ -4,6 +4,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/popover"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
@@ -13,15 +14,17 @@ import (
 const toolbarTooltipDelay = 450 * time.Millisecond
 
 type toolbarHover struct {
-	bar     *toolbarHints
-	index   int
-	label   string
-	due     time.Time
-	timer   *time.Timer
-	visible *toolbarTooltip
+	bar       widget.Widget
+	index     int
+	label     string
+	due       time.Time
+	timer     *time.Timer
+	visible   *toolbarTooltip
+	anchor    func() geometry.Rect
+	placement popover.Placement
 }
 
-func (w *workbench) hoverToolbarItem(bar *toolbarHints, index int, label string) {
+func (w *workbench) hoverToolbarItem(bar widget.Widget, index int, label string, anchor func() geometry.Rect, placement popover.Placement) {
 	h := &w.toolbarHover
 	if h.bar == bar && h.index == index && h.label == label {
 		return
@@ -31,7 +34,7 @@ func (w *workbench) hoverToolbarItem(bar *toolbarHints, index int, label string)
 		return
 	}
 	w.toolbarHover = toolbarHover{
-		bar: bar, index: index, label: label, due: time.Now().Add(toolbarTooltipDelay),
+		bar: bar, index: index, label: label, anchor: anchor, placement: placement, due: time.Now().Add(toolbarTooltipDelay),
 		timer: time.AfterFunc(toolbarTooltipDelay, w.host.RequestRedraw),
 	}
 }
@@ -53,7 +56,8 @@ func (w *workbench) updateToolbarTooltip(now time.Time) {
 		return
 	}
 	win := w.ui.Window()
-	if win.Overlays().TopInteractive() != nil {
+	control, statusButton := h.bar.(*button.Widget)
+	if win.Overlays().TopInteractive() != nil || statusButton && win.HoveredWidget() != control {
 		w.clearToolbarTooltip()
 		return
 	}
@@ -61,7 +65,7 @@ func (w *workbench) updateToolbarTooltip(now time.Time) {
 		return
 	}
 	if manager, ok := win.Context().OverlayManager().(widget.PassiveOverlayManager); ok {
-		tip := &toolbarTooltip{bar: h.bar, index: h.index, text: h.label, painter: w.paint.Popover}
+		tip := &toolbarTooltip{anchor: h.anchor, placement: h.placement, text: h.label, painter: w.paint.Popover}
 		tip.SetVisible(true)
 		manager.PushPassiveOverlay(tip)
 		h.visible = tip
@@ -70,16 +74,15 @@ func (w *workbench) updateToolbarTooltip(now time.Time) {
 
 type toolbarTooltip struct {
 	widget.WidgetBase
-	bar     *toolbarHints
-	index   int
-	text    string
-	painter popover.Painter
+	anchor    func() geometry.Rect
+	placement popover.Placement
+	text      string
+	painter   popover.Painter
 }
 
 func (t *toolbarTooltip) Layout(ctx widget.Context, c geometry.Constraints) geometry.Size {
 	size := c.Constrain(geometry.Sz(float32(utf8.RuneCountInString(t.text))*9+18, 30))
-	anchor := t.bar.ItemBounds(t.index).Translate(t.bar.ScreenOrigin())
-	pos := popover.CalculatePosition(popover.BottomStart, anchor, size, ctx.WindowSize(), 6)
+	pos := popover.CalculatePosition(t.placement, t.anchor(), size, ctx.WindowSize(), 6)
 	t.SetBounds(geometry.FromPointSize(pos, size))
 	return size
 }
@@ -89,7 +92,7 @@ func (t *toolbarTooltip) Draw(_ widget.Context, canvas widget.Canvas) {
 	width := min(bounds.Width(), canvas.MeasureText(t.text, 12, false)+18)
 	bounds.Max.X = bounds.Min.X + width
 	canvas.PushClip(bounds)
-	t.painter.PaintTooltip(canvas, &popover.TooltipPaintState{Bounds: bounds, Text: t.text, Placement: popover.BottomStart})
+	t.painter.PaintTooltip(canvas, &popover.TooltipPaintState{Bounds: bounds, Text: t.text, Placement: t.placement})
 	canvas.PopClip()
 }
 

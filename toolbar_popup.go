@@ -89,6 +89,10 @@ func (w *workbench) openAnchoredPopup(trigger popupAnchor, id string, anchor fun
 		popover.PlacementOpt(placement),
 		popover.PainterOpt(w.paint.Popover),
 		popover.OnHide(func() {
+			if w.repoSearchCancel != nil {
+				w.repoSearchCancel()
+				w.repoSearchCancel = nil
+			}
 			w.openPopup, w.popupIcon = nil, ""
 			ctx.RequestFocus(trigger)
 			trigger.SetNeedsRedraw(true)
@@ -126,11 +130,12 @@ func (w *workbench) selectPopupAction(action func()) {
 }
 
 type popupChoice struct {
-	label   string
-	detail  string
-	glyph   icon.IconData
-	current bool
-	action  func()
+	label       string
+	detail      string
+	glyph       icon.IconData
+	current     bool
+	action      func()
+	contextMenu func(geometry.Point)
 }
 
 func (w *workbench) repositoriesPopup(bar *toolbarHints, index int) {
@@ -138,13 +143,15 @@ func (w *workbench) repositoriesPopup(bar *toolbarHints, index int) {
 	for _, path := range w.prefs.Recent {
 		choices = append(choices, popupChoice{
 			label: filepath.Base(path), detail: path, current: path == w.path,
-			action: func() { w.open(path) },
+			action:      func() { w.open(path) },
+			contextMenu: func(at geometry.Point) { w.repositoryMenu(path, at) },
 		})
 	}
 	add := w.btn("Open repository…", button.TextOnly, true, func() {
 		w.selectPopupAction(func() { w.show("open") })
 	})
-	content, focus := w.choicePanel(355, 42, "Search repositories", choices, add)
+	content, focus := w.searchChoicePanel(400, 42, "Search repositories or paste a path", choices, w.repositorySearch(), add)
+	content.triggerMenu = w.repositoryTriggerMenu
 	w.openToolbarPopup(bar, index, popover.BottomStart, content, focus)
 }
 
@@ -166,6 +173,10 @@ func (w *workbench) remotesPopup(bar *toolbarHints, index int) {
 }
 
 func (w *workbench) choicePanel(width, rowHeight float32, placeholder string, choices []popupChoice, footer ...widget.Widget) (widget.Widget, widget.Widget) {
+	return w.searchChoicePanel(width, rowHeight, placeholder, choices, nil, footer...)
+}
+
+func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder string, choices []popupChoice, search func(string, func([]popupChoice)), footer ...widget.Widget) (*choicePanelKeys, widget.Widget) {
 	matches := choices
 	selection := state.NewSignal(0)
 	for i, choice := range choices {
@@ -214,43 +225,107 @@ func (w *workbench) choicePanel(width, rowHeight float32, placeholder string, ch
 		}),
 	)
 	panel := primitives.VBox().Width(width).Padding(8).Gap(6)
+	listBox := primitives.VBox(list).Height(rowHeight * float32(max(1, min(8, len(choices)))))
+	refresh := func() {
+		if search != nil {
+			listBox.Height(rowHeight * float32(max(1, min(8, len(matches)))))
+			listBox.MarkNeedsLayout()
+		}
+		list.InvalidateData()
+		w.ui.Window().Context().Invalidate()
+	}
 	var focus widget.Widget = list
 	if placeholder != "" {
 		input := w.input(placeholder, "", func(query string) {
-			query = strings.ToLower(strings.TrimSpace(query))
+			needle := strings.TrimSpace(query)
+			if search != nil {
+				needle = repositoryQuery(query)
+			}
+			needle = strings.ToLower(needle)
 			matches = nil
 			for _, choice := range choices {
-				if strings.Contains(strings.ToLower(choice.label+" "+choice.detail), query) {
+				if strings.Contains(strings.ToLower(choice.label+" "+choice.detail), needle) {
 					matches = append(matches, choice)
 				}
 			}
 			selection.Set(0)
 			scroll.Set(0)
-			list.InvalidateData()
-			w.ui.Window().Context().Invalidate()
+			refresh()
+			if search != nil {
+				local := matches
+				if len(local) == 0 {
+					matches = []popupChoice{{label: "No matching repositories"}}
+					refresh()
+				}
+				search(query, func(results []popupChoice) {
+					var extra []popupChoice
+					for _, result := range results {
+						found := false
+						for _, known := range local {
+							if result.detail != "" && known.contextMenu != nil && sameRepositoryPath(result.detail, known.detail) {
+								found = true
+								break
+							}
+						}
+						if !found {
+							extra = append(extra, result)
+						}
+					}
+					matches = append(local, extra...)
+					refresh()
+				})
+			}
 		}, func(string) { choose(selection.Get()) })
 		panel.AddChild(compactInput(input))
 		focus = input
 	}
-	if len(choices) > 0 || placeholder == "" {
-		panel.AddChild(primitives.VBox(list).Height(rowHeight * float32(max(1, min(8, len(choices))))))
+	if len(choices) > 0 || placeholder == "" || search != nil {
+		panel.AddChild(listBox)
 	}
 	for _, child := range footer {
 		panel.AddChild(child)
 	}
-	return &choicePanelKeys{panel, focus, list, selection}, focus
+	return &choicePanelKeys{BoxWidget: panel, focus: focus, list: list, selection: selection, scroll: scroll, rowHeight: rowHeight, wrapSelection: search != nil,
+		menu: func(i int, at geometry.Point) bool {
+			if i < 0 || i >= len(matches) || matches[i].contextMenu == nil {
+				return false
+			}
+			matches[i].contextMenu(at)
+			return true
+		}}, focus
 }
 
 type choicePanelKeys struct {
 	*primitives.BoxWidget
-	focus     widget.Widget
-	list      *listview.Widget
-	selection state.Signal[int]
+	focus         widget.Widget
+	list          *listview.Widget
+	selection     state.Signal[int]
+	scroll        state.Signal[float32]
+	rowHeight     float32
+	menu          func(int, geometry.Point) bool
+	triggerMenu   func(geometry.Point) bool
+	wrapSelection bool
 }
 
 func (p *choicePanelKeys) Event(ctx widget.Context, e event.Event) bool {
+	bounds := p.list.ScreenBounds()
+	if mouse, ok := e.(*event.MouseEvent); ok && mouse.MouseType == event.MousePress && mouse.Button == event.ButtonRight {
+		if p.triggerMenu != nil && p.triggerMenu(mouse.GlobalPosition) {
+			return true
+		}
+		if bounds.Contains(mouse.GlobalPosition) {
+			i := int((mouse.GlobalPosition.Y - bounds.Min.Y + p.scroll.Get()) / p.rowHeight)
+			if p.menu(i, mouse.GlobalPosition) {
+				return true
+			}
+		}
+	}
 	if key, ok := e.(*event.KeyEvent); ok && key.KeyType != event.KeyRelease &&
 		ctx.IsFocused(p.focus) && p.list.GetItemCount() > 0 {
+		if isContextMenuKey(key) {
+			y := bounds.Min.Y + float32(p.selection.Get()+1)*p.rowHeight - p.scroll.Get()
+			return p.menu(p.selection.Get(), geometry.Pt(bounds.Min.X, max(bounds.Min.Y, min(y, bounds.Max.Y))))
+		}
 		delta := 0
 		switch key.Key {
 		case event.KeyDown:
@@ -259,7 +334,13 @@ func (p *choicePanelKeys) Event(ctx widget.Context, e event.Event) bool {
 			delta = -1
 		}
 		if delta != 0 {
-			i := max(0, min(p.selection.Get()+delta, p.list.GetItemCount()-1))
+			n := p.list.GetItemCount()
+			i := p.selection.Get() + delta
+			if p.wrapSelection {
+				i = (i + n) % n
+			} else {
+				i = max(0, min(i, n-1))
+			}
 			p.selection.Set(i)
 			p.list.ScrollToIndex(i)
 			return true

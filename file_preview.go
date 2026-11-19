@@ -166,10 +166,14 @@ func (w *workbench) previewPanel() widget.Widget {
 	controls := []widget.Widget{primitives.Expanded(w.pick("File", names, v.index, func(i int) { change(i, v.mode) })), w.pick("File view", modes, selected, func(i int) { change(v.index, modes[i]) })}
 	if v.mode == diffMode {
 		style := 0
-		if w.previewSplit {
+		if w.prefs.Settings.SplitDiff {
 			style = 1
 		}
-		controls = append(controls, w.pick("Diff layout", []string{"Unified", "Split"}, style, func(i int) { w.previewSplit = i == 1; w.redraw() }))
+		controls = append(controls, w.pick("Diff layout", []string{"Unified", "Split"}, style, func(i int) {
+			w.prefs.Settings.SplitDiff = i == 1
+			w.prefs.save(w.settingsPath)
+			w.redraw()
+		}))
 	}
 	controls = append(controls, w.check("Wrap", w.previewWrap, true, func(b bool) { w.previewWrap = b; w.redraw() }), w.check("Files", w.previewSidebar, true, func(b bool) { w.previewSidebar = b; w.redraw() }), w.btn("Close", button.Outlined, true, w.closePreview))
 	var content widget.Widget
@@ -185,7 +189,7 @@ func (w *workbench) previewPanel() widget.Widget {
 		}
 		content = w.muted(msg)
 	default:
-		split := v.mode == diffMode && w.previewSplit
+		split := v.mode == diffMode && w.prefs.Settings.SplitDiff
 		rows := layoutDiffRows(v.rows, split)
 		offset := state.NewSignal(float32(0))
 		pane := func(side int) widget.Widget {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/popover"
+	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
 	"github.com/gogpu/ui/icon"
 	"github.com/gogpu/ui/primitives"
@@ -20,6 +21,7 @@ import (
 func (w *workbench) statusBar(hint state.Signal[string]) widget.Widget {
 	w.statusText = state.NewSignal(w.historyStatus())
 	var items []widget.Widget
+	hints := make(map[*button.Widget]string)
 	if w.path != "" {
 		refs := slices.DeleteFunc(slices.Clone(w.data.Branches), func(ref string) bool {
 			return !strings.HasPrefix(ref, repo.LocalRefPrefix)
@@ -42,12 +44,14 @@ func (w *workbench) statusBar(hint state.Signal[string]) widget.Widget {
 			w.openAnchoredPopup(checkout, checkoutMenu, checkout.ScreenBounds, popover.TopStart, content, focus)
 		}).MaxWidth(230)
 		items = append(items, checkout)
+		hints[checkout] = "Switch branch · " + w.currentBranchLabel()
 		if w.data.Upstream != "" {
 			hasRemote := len(w.data.Remotes) != 0
-			items = append(items, w.muted(w.data.Upstream).FontSize(12).MaxLines(1).Ellipsis(),
-				w.statusButton(strconv.Itoa(w.data.Ahead), pushIcon, hasRemote && w.data.CurrentBranch() != "", "", func() { w.syncBranch(true) }),
-				w.statusButton(strconv.Itoa(w.data.Behind), pullIcon, hasRemote, "", func() { w.syncBranch(false) }),
-			)
+			push := w.statusButton(strconv.Itoa(w.data.Ahead), pushIcon, hasRemote && w.data.CurrentBranch() != "", "", func() { w.syncBranch(true) })
+			pull := w.statusButton(strconv.Itoa(w.data.Behind), pullIcon, hasRemote, "", func() { w.syncBranch(false) })
+			hints[push] = syncLabel("Push to "+w.data.Upstream, w.data.Ahead)
+			hints[pull] = syncLabel("Pull from "+w.data.Upstream, w.data.Behind)
+			items = append(items, w.muted(w.data.Upstream).FontSize(12).MaxLines(1).Ellipsis(), push, pull)
 		}
 		if count := len(w.data.Stashes); count > 0 {
 			label := fmt.Sprintf("%d stashes", count)
@@ -61,11 +65,49 @@ func (w *workbench) statusBar(hint state.Signal[string]) widget.Widget {
 				w.openAnchoredPopup(saved, stashMenu, saved.ScreenBounds, popover.TopStart, content, focus)
 			})
 			items = append(items, saved)
+			hints[saved] = "Show stashes · " + label
 		}
 	}
 	items = append(items, primitives.Expanded(w.muted("").FontSize(12).ContentSignal(w.statusText).MaxLines(1).Ellipsis()),
 		w.muted("").FontSize(12).ContentSignal(hint).MaxLines(1).Ellipsis(), w.muted(w.path).FontSize(12).MaxLines(1).Ellipsis())
-	return row(items...).PaddingXY(8, 2).Background(w.theme.Colors.Surface)
+	return &statusHints{BoxWidget: row(items...).PaddingXY(8, 2).Background(w.theme.Colors.Surface), bench: w, hints: hints}
+}
+
+type statusHints struct {
+	*primitives.BoxWidget
+	bench *workbench
+	hints map[*button.Widget]string
+}
+
+func (s *statusHints) Event(ctx widget.Context, e event.Event) bool {
+	if mouse, ok := e.(*event.MouseEvent); ok {
+		b := s.bench
+		switch mouse.MouseType {
+		case event.MouseEnter, event.MouseMove:
+			var hovered *button.Widget
+			if mouse.Buttons == 0 {
+				for control, label := range s.hints {
+					if control.ScreenBounds().Contains(mouse.GlobalPosition) {
+						hovered = control
+						b.hoverToolbarItem(control, 0, label, control.ScreenBounds, popover.TopStart)
+						break
+					}
+				}
+			}
+			if hovered == nil {
+				s.clearTooltip()
+			}
+		case event.MouseLeave, event.MousePress:
+			s.clearTooltip()
+		}
+	}
+	return s.BoxWidget.Event(ctx, e)
+}
+
+func (s *statusHints) clearTooltip() {
+	if control, ok := s.bench.toolbarHover.bar.(*button.Widget); ok && s.hints[control] != "" {
+		s.bench.clearToolbarTooltip()
+	}
 }
 
 func (w *workbench) historyStatus() string {
