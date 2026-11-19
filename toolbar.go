@@ -4,7 +4,6 @@ import (
 	"embed"
 	"fmt"
 
-	"github.com/gogpu/ui/core/menu"
 	"github.com/gogpu/ui/core/toolbar"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
@@ -35,8 +34,6 @@ func intIcon(name string) icon.IconData {
 	return icon.FromSVGXML(name, svg)
 }
 
-const remotesLabel = "Remotes"
-
 func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 	action := func(label string, image icon.IconData, enabled bool, fn func()) toolbar.Item {
 		item := toolbar.IconButton(label, image, fn)
@@ -49,7 +46,7 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 		return item
 	}
 	items := []toolbar.Item{toolbar.Spacer()}
-	var bar *toolbar.Widget
+	var bar *toolbarHints
 	if w.path != "" {
 		hasRemote := len(w.data.Remotes) > 0
 		hasHead := w.data.Head != ""
@@ -72,11 +69,9 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 			items = append(items, action("Publish to GitHub", pushIcon, hasHead, w.publishForm))
 		}
 		index := len(items)
-		remotes := toolbar.TextIconButton(remotesLabel, remotesIcon, func() {
-			w.showRemotesMenu(bar, index)
+		remotes := w.selector("Remotes", remotesIcon, 100, func() {
+			w.remotesPopup(bar, index)
 		})
-		remotes.Enabled = !w.busy
-		remotes.Width = 100
 		items = append(items, remotes,
 			action("Refresh (F5)", icon.ExpRefresh, true, func() { w.refresh(w.filter) }),
 		)
@@ -85,11 +80,16 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 		action("Settings", icon.ExpSettings, true, func() { w.show("settings") }),
 		toolbar.Custom(primitives.Box().Width(4).Height(1)),
 	)
+	bar = w.headerToolbar(hint, items)
+	return bar
+}
+
+func (w *workbench) headerToolbar(hint state.Signal[string], items []toolbar.Item) *toolbarHints {
 	painter := w.paint.Toolbar
 	painter.IconSize = 20
-	bar = toolbar.New(toolbar.Items(items...), toolbar.Height(titleBarHeight),
+	bar := toolbar.New(toolbar.Items(items...), toolbar.Height(titleBarHeight),
 		toolbar.ButtonSize(32), toolbar.ButtonHeight(32), toolbar.Gap(6),
-		toolbar.PainterOpt(actionToolbarPainter{painter}))
+		toolbar.PainterOpt(actionToolbarPainter{painter, w}))
 	return &toolbarHints{Widget: bar, hint: hint}
 }
 
@@ -98,25 +98,6 @@ func syncLabel(label string, count int) string {
 		return fmt.Sprintf("%s (%d commits)", label, count)
 	}
 	return label
-}
-
-func (w *workbench) showRemotesMenu(bar *toolbar.Widget, index int) {
-	var items []menu.MenuItem
-	for _, name := range w.data.Remotes {
-		items = append(items, menu.Item("Edit "+name+"…", "", func() { w.editRemoteForm(name) }))
-	}
-	if len(items) > 0 {
-		items = append(items, menu.Sep())
-	}
-	items = append(items, menu.Item("Add remote…", "", w.addRemoteForm))
-	if len(w.data.Remotes) == 0 {
-		publish := menu.Item("Publish to GitHub…", "", w.publishForm)
-		publish.Disabled = w.data.Head == ""
-		items = append(items, publish)
-	}
-	bounds := bar.ItemBounds(index).Translate(bar.ScreenOrigin())
-	popup := menu.NewContextMenu(items, menu.ContextPainterOpt(w.paint.Menu))
-	popup.Show(w.ui.Window().Context(), geometry.Pt(bounds.Min.X, bar.ScreenBounds().Max.Y+3))
 }
 
 // Show the command name in the status bar on hover, including disabled actions.
@@ -140,25 +121,34 @@ func (t *toolbarHints) Event(ctx widget.Context, e event.Event) bool {
 
 type actionToolbarPainter struct {
 	devtools.ToolbarPainter
+	bench *workbench
 }
 
 // The title bar draws the shared background and separator.
 func (p actionToolbarPainter) PaintToolbar(widget.Canvas, toolbar.PaintToolbarState) {}
 
 func (p actionToolbarPainter) PaintButtonItem(canvas widget.Canvas, item toolbar.PaintButtonState) {
-	if item.Label != remotesLabel {
+	if !item.ShowLabel {
 		p.ToolbarPainter.PaintButtonItem(canvas, item)
 		return
 	}
 	colors := p.Theme.Colors
 	bounds := item.Bounds
-	canvas.DrawRoundRect(bounds, colors.Background, 4)
-	p.ToolbarPainter.PaintButtonItem(canvas, item)
-	canvas.StrokeRoundRect(bounds, colors.Border, 4, 1)
-	color := colors.OnSurfaceSecondary
+	if item.Hovered || p.bench.popupIcon == item.Icon.Name {
+		canvas.DrawRoundRect(bounds, colors.ControlHover, 5)
+	}
+	color := colors.OnSurface
 	if item.Disabled {
 		color = colors.OnSurfaceDisabled
 	}
-	chevron := geometry.NewRect(bounds.Max.X-18, bounds.Center().Y-6, 12, 12)
+	center := bounds.Center().Y
+	icon.Draw(canvas, item.Icon, geometry.NewRect(bounds.Min.X+7, center-9, 18, 18), color)
+	chevron := geometry.NewRect(bounds.Max.X-19, center-7, 14, 14)
+	label := geometry.NewRect(bounds.Min.X+29, bounds.Min.Y, chevron.Min.X-bounds.Min.X-30, bounds.Height())
+	if !label.IsEmpty() {
+		canvas.PushClip(label)
+		canvas.DrawText(item.Label, label, 13, color, false, widget.TextAlignLeft)
+		canvas.PopClip()
+	}
 	icon.Draw(canvas, icon.ExpChevronDown, chevron, color)
 }

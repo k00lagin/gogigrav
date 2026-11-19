@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -42,6 +41,10 @@ func (w *workbench) input(label, val string, change func(string), submit func(st
 	}
 	return textfield.New(opts...)
 }
+
+func compactInput(field *textfield.Widget) widget.Widget {
+	return primitives.VBox(field).Height(32)
+}
 func (w *workbench) pick(label string, items []string, selected int, fn func(int)) widget.Widget {
 	return dropdown.New(dropdown.Items(items...), dropdown.Placeholder(label), dropdown.Selected(selected), dropdown.MaxVisibleItems(12), dropdown.Disabled(w.busy || len(items) == 0), dropdown.PainterOpt(w.paint.Dropdown), dropdown.OnChange(func(i int, _ string) {
 		if !w.busy && i >= 0 && i < len(items) {
@@ -64,33 +67,14 @@ func (w *workbench) showError(err error) {
 }
 
 func (w *workbench) render() {
+	w.closeToolbarPopup()
 	w.dirty = false
 	cs := w.theme.Colors
-	names := make([]string, 0, len(w.prefs.Recent)+1)
-	for _, p := range w.prefs.Recent {
-		names = append(names, filepath.Base(p))
-	}
-	names = append(names, "Open repository…")
-	picker := w.pick("Repository", names, slices.Index(w.prefs.Recent, w.path), func(i int) {
-		if i == len(w.prefs.Recent) {
-			w.show("open")
-		} else {
-			w.open(w.prefs.Recent[i])
-		}
-	})
-	header := []widget.Widget{primitives.VBox(picker).Width(160).Height(30)}
+	hint := state.NewSignal("")
+	header := []widget.Widget{w.repositoryToolbar(hint)}
 	active := w.path != ""
 	if active {
-		refs := []string{""}
-		branches := []string{"All branches"}
-		for _, r := range w.data.Branches {
-			if !w.filter.Remote && strings.HasPrefix(r, "refs/remotes/") {
-				continue
-			}
-			refs = append(refs, r)
-			branches = append(branches, shortRef(r))
-		}
-		header = append(header, primitives.VBox(w.pick("Branches", branches, slices.Index(refs, w.filter.Ref), func(i int) { f := w.filter; f.Ref = refs[i]; w.refresh(f) })).Width(142).Height(30),
+		header = append(header,
 			w.check("Remote branches", w.filter.Remote, true, func(v bool) {
 				f := w.filter
 				f.Remote = v
@@ -100,7 +84,6 @@ func (w *workbench) render() {
 				w.refresh(f)
 			}))
 	}
-	hint := state.NewSignal("")
 	w.titleBar = w.newTitleBar(row(header...).PaddingLeft(4), w.actionToolbar(hint))
 	w.searchField = nil
 	var body widget.Widget
@@ -111,7 +94,7 @@ func (w *workbench) render() {
 				w.search = s
 				w.filterRows()
 			}, nil)
-			find = w.searchField
+			find = compactInput(w.searchField)
 		}
 		historyBar := row(w.text("History").Bold(), primitives.Expanded(find), w.btn("Load more", button.TextOnly, w.data.More, func() { f := w.filter; f.Limit += 250; w.refresh(f) })).PaddingXY(10, 5).Background(cs.Surface)
 		if w.table == nil {
@@ -360,7 +343,7 @@ func (w *workbench) changesPanel() widget.Widget {
 		}
 		w.redraw()
 	})
-	controls := primitives.VBox(w.muted("Commit to "+d.Branch), msg, row(w.btn("Commit", button.Filled, staged || w.amend, commit), amend)).Gap(7).Padding(12)
+	controls := primitives.VBox(w.muted("Commit to "+d.Branch), compactInput(msg), row(w.btn("Commit", button.Filled, staged || w.amend, commit), amend)).Gap(7).Padding(12)
 	selectAction := func(stage bool) widget.Widget {
 		title := "Unstage"
 		if stage {

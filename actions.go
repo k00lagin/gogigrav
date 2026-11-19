@@ -52,7 +52,7 @@ func (w *workbench) formPanel() widget.Widget {
 		if f.choices != nil {
 			children = append(children, w.pick(f.label, f.choices, slices.Index(f.choices, f.value), func(i int) { f.value = f.choices[i] }))
 		} else {
-			children = append(children, w.input(f.label, f.value, func(s string) { f.value = s }, nil))
+			children = append(children, compactInput(w.input(f.label, f.value, func(s string) { f.value = s }, nil)))
 		}
 	}
 	for i, a := range w.form.actions {
@@ -78,7 +78,7 @@ func (w *workbench) openPanel() widget.Widget {
 		}
 	}
 	field := w.input("Repository or parent folder", path, func(s string) { w.drafts["openPath"] = s }, open)
-	return primitives.VBox(w.muted("Local folder"), field, row(
+	return primitives.VBox(w.muted("Local folder"), compactInput(field), row(
 		w.btn("Open", button.Filled, true, func() { open(field.Text()) }),
 		w.btn("Initialize…", button.Outlined, true, func() {
 			p, err := filepath.Abs(strings.TrimSpace(field.Text()))

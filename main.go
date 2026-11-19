@@ -16,6 +16,7 @@ import (
 	"github.com/gogpu/gogpu"
 	"github.com/gogpu/ui/app"
 	"github.com/gogpu/ui/core/datatable"
+	"github.com/gogpu/ui/core/popover"
 	"github.com/gogpu/ui/core/textfield"
 	"github.com/gogpu/ui/core/titlebar"
 	"github.com/gogpu/ui/desktop"
@@ -74,6 +75,9 @@ type workbench struct {
 	table       *datatable.Widget
 	searchField *textfield.Widget
 	titleBar    *titlebar.Widget
+	openPopup   *popover.Popover
+	popupIcon   string
+	popupAction func()
 	searchOpen  bool
 	focusSearch bool
 	rows        []repo.Commit
@@ -122,6 +126,10 @@ func main() {
 		}
 	})
 	w.host.OnUpdate(func(_ float64) {
+		if action := w.popupAction; action != nil {
+			w.popupAction = nil
+			action()
+		}
 		select {
 		case apply := <-w.done:
 			apply()
