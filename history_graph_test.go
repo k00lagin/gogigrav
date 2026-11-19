@@ -4,6 +4,9 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/gogpu/ui/geometry"
+	"github.com/gogpu/ui/uitest"
+	"github.com/gogpu/ui/widget"
 	"gogigrav/internal/repo"
 )
 
@@ -52,6 +55,33 @@ func TestHistoryGraphProjectsHiddenAncestors(t *testing.T) {
 	graph = buildHistoryGraph(data, data.Commits, false)
 	if graph.rows[1].kind != graphHeadNode {
 		t.Fatalf("HEAD marker missing: %+v", graph.rows[1])
+	}
+}
+
+func TestWorkingTreeGraphLinesStartAtTheRing(t *testing.T) {
+	w := &workbench{graph: layoutHistoryGraph([]graphInput{
+		{kind: graphWorkingTreeNode, parents: []string{"left", "right"}},
+		{hash: "left"},
+		{hash: "right"},
+	})}
+	canvas := &uitest.MockCanvas{}
+	bounds := geometry.NewRect(5, 7, w.graph.width(), 27)
+	w.paintGraphRow(canvas, bounds, 0, widget.ColorWhite)
+	if len(canvas.StrokeCircles) != 1 || len(canvas.Lines) < 2 {
+		t.Fatal("expected the working tree ring and its outgoing connections")
+	}
+	ring := canvas.StrokeCircles[0]
+	join := ring.Center.Add(geometry.Pt(0, ring.Radius))
+	if got := canvas.Lines[0].From; got != join {
+		t.Errorf("straight connection starts at %v, want %v", got, join)
+	}
+	if got := canvas.Lines[1].From; got != join {
+		t.Errorf("curved connection starts at %v, want %v", got, join)
+	}
+	for _, line := range canvas.Lines {
+		if min(line.From.Y, line.To.Y) < join.Y {
+			t.Fatalf("connection extends into the working tree ring: %v -> %v", line.From, line.To)
+		}
 	}
 }
 

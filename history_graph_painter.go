@@ -10,6 +10,8 @@ const (
 	graphPadding  = 6
 	graphSpacing  = 16
 	graphMaxWidth = 188
+
+	workingTreeNodeRadius = 4
 )
 
 func (g historyGraph) width() float32 {
@@ -70,6 +72,10 @@ func (w *workbench) paintGraphRow(canvas widget.Canvas, bounds geometry.Rect, in
 			bottom = middle
 		case graphBottom:
 			top = middle
+			if row.kind == graphWorkingTreeNode {
+				// Join the ring at its lower edge so the center stays empty.
+				top += workingTreeNodeRadius
+			}
 		}
 		from := geometry.Pt(bounds.Min.X+w.graph.laneX(segment.from), top)
 		to := geometry.Pt(bounds.Min.X+w.graph.laneX(segment.to), bottom)
@@ -79,8 +85,7 @@ func (w *workbench) paintGraphRow(canvas widget.Canvas, bounds geometry.Rect, in
 	color := w.graphPalette[row.color]
 	switch row.kind {
 	case graphWorkingTreeNode:
-		canvas.DrawCircle(center, 4, background)
-		canvas.StrokeCircle(center, 4, color, 2)
+		canvas.StrokeCircle(center, workingTreeNodeRadius, color, 2)
 	case graphStashNode:
 		box := geometry.NewRect(center.X-4, center.Y-4, 8, 8)
 		canvas.DrawRoundRect(box, color, 1.5)
