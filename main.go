@@ -118,6 +118,7 @@ type workbench struct {
 
 	branchFilter     *repo.Filter
 	branchBar        *toolbarHints
+	toolbarHover     toolbarHover
 	loadMoreDisabled state.Signal[bool]
 	statusText       state.Signal[string]
 
@@ -189,6 +190,7 @@ func main() {
 		if w.dirty {
 			w.render()
 		}
+		w.updateToolbarTooltip(time.Now())
 	})
 	paths := flag.Args()
 	if len(paths) == 0 {

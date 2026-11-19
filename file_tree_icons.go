@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"path"
+	"strconv"
 	"strings"
 
 	"github.com/gogpu/ui/core/treeview"
@@ -66,25 +67,94 @@ func (s fileIconSet) forPath(file string) fileIcon {
 
 type fileTreePainter struct {
 	devtools.TreeViewPainter
-	dark bool
+	dark   bool
+	colors map[byte]widget.Color
 }
 
 func (p fileTreePainter) PaintLabel(canvas widget.Canvas, state treeview.LabelState) {
-	const size, gap = 16, 5
 	if state.Node != nil {
-		if item, ok := state.Node.Data.(*fileItem); ok && state.Bounds.Width() > size+gap {
-			glyph := fileIcons.forPath(item.file.Path)
-			color := glyph.light
-			if p.dark {
-				color = glyph.dark
-			}
-			if state.Disabled {
-				color = color.WithAlpha(0.5)
-			}
-			bounds := geometry.NewRect(state.Bounds.Min.X, state.Bounds.Center().Y-size/2, size, size)
-			icon.Draw(canvas, glyph.image, bounds, color)
-			state.Bounds.Min.X += size + gap
+		if item, ok := state.Node.Data.(*fileItem); ok {
+			p.paintFileLabel(canvas, state, item)
+			return
 		}
 	}
 	p.TreeViewPainter.PaintLabel(canvas, state)
+}
+
+func (p fileTreePainter) paintFileLabel(canvas widget.Canvas, state treeview.LabelState, item *fileItem) {
+	const iconSize, gap = 16, 5
+	bounds := state.Bounds
+	if bounds.IsEmpty() {
+		return
+	}
+	status, stat := item.change()
+	color := p.colors[status]
+	if color == (widget.Color{}) {
+		color = p.colors['M']
+	}
+	right := bounds.Max.X - 9
+	if status != 0 && status != ' ' {
+		marker := string(status)
+		if status == '?' {
+			marker = "U"
+		}
+		statusBounds := geometry.NewRect(right-13, bounds.Min.Y, 13, bounds.Height())
+		canvas.DrawText(marker, statusBounds, 12, color, true, widget.TextAlignCenter)
+		right = statusBounds.Min.X - 4
+	}
+	if stat.Text {
+		added := "+" + strconv.Itoa(stat.Added)
+		deleted := "−" + strconv.Itoa(stat.Deleted)
+		addedWidth, deletedWidth := canvas.MeasureText(added, 12, false), canvas.MeasureText(deleted, 12, false)
+		if right-addedWidth-deletedWidth > bounds.Min.X+iconSize+gap+20 {
+			right -= deletedWidth
+			canvas.DrawText(deleted, geometry.NewRect(right, bounds.Min.Y, deletedWidth, bounds.Height()), 12, p.colors['D'], false, widget.TextAlignLeft)
+			right -= addedWidth
+			canvas.DrawText(added, geometry.NewRect(right, bounds.Min.Y, addedWidth, bounds.Height()), 12, p.colors['A'], false, widget.TextAlignLeft)
+		}
+	}
+	bounds.Max.X = right - gap
+	if bounds.Width() <= iconSize+gap {
+		return
+	}
+	glyph := fileIcons.forPath(item.file.Path)
+	iconColor := glyph.light
+	if p.dark {
+		iconColor = glyph.dark
+	}
+	icon.Draw(canvas, glyph.image, geometry.NewRect(bounds.Min.X, bounds.Center().Y-iconSize/2, iconSize, iconSize), iconColor)
+	bounds.Min.X += iconSize + gap
+	canvas.PushClip(bounds)
+	canvas.DrawText(state.Text, bounds, 13, color, false, widget.TextAlignLeft)
+	canvas.PopClip()
+}
+
+func (w *workbench) fileChangeColors() map[byte]widget.Color {
+	colors := make(map[byte]widget.Color)
+	settings := w.prefs.Settings
+	for _, entry := range []struct {
+		status      byte
+		name        string
+		light, dark uint32
+	}{
+		{'A', "added", 0x587c0c, 0x81b88b},
+		{'M', "modified", 0x895503, 0xe2c08d},
+		{'D', "deleted", 0xad0707, 0xc74e39},
+		{'R', "renamed", 0x007100, 0x73c991},
+		{'?', "untracked", 0x007100, 0x73c991},
+		{'U', "conflicting", 0xad0707, 0xe4676b},
+	} {
+		value := entry.light
+		if w.theme.IsDark() {
+			value = entry.dark
+		}
+		colors[entry.status] = widget.Hex(value)
+		if settings.UseImportedTheme && settings.ImportedTheme != nil {
+			if color, ok := settings.ImportedTheme.color("gitDecoration." + entry.name + "ResourceForeground"); ok {
+				colors[entry.status] = color
+			}
+		}
+	}
+	colors['C'] = colors['R']
+	return colors
 }

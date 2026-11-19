@@ -15,7 +15,6 @@ import (
 	"github.com/gogpu/ui/core/scrollview"
 	"github.com/gogpu/ui/core/splitview"
 	"github.com/gogpu/ui/core/textfield"
-	"github.com/gogpu/ui/core/treeview"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/widget"
@@ -67,6 +66,7 @@ func (w *workbench) showError(err error) {
 }
 
 func (w *workbench) render() {
+	w.clearToolbarTooltip()
 	w.closeToolbarPopup()
 	w.dirty = false
 	cs := w.theme.Colors
@@ -303,55 +303,6 @@ func (w *workbench) panel() widget.Widget {
 	return primitives.VBox(row(head...).PaddingXY(12, 6).Height(40), line(w), primitives.Expanded(content)).Background(cs.Surface)
 }
 
-type fileItem struct {
-	file  repo.File
-	stage bool
-}
-
-func (w *workbench) fileTree(groups ...*treeview.TreeNode) widget.Widget {
-	root := &treeview.TreeNode{ID: "root", Label: "Files", Expanded: true, Children: groups}
-	painter := fileTreePainter{w.paint.TreeView, w.theme.IsDark()}
-	return treeview.New(treeview.Root(root), treeview.SelectionModeOpt(treeview.SelectionSingle), treeview.ItemHeight(23), treeview.IndentWidth(12), treeview.ShowLines(true), treeview.PainterOpt(painter), treeview.ScrollbarPainterOpt(w.paint.Scrollbar), treeview.OnSelect(func(n *treeview.TreeNode) {
-		item, _ := n.Data.(*fileItem)
-		w.file = item
-		w.ui.Window().Context().Invalidate()
-	}))
-}
-func fileGroup(name string, files []repo.File, stage bool, filter func(repo.File) bool) *treeview.TreeNode {
-	root := &treeview.TreeNode{ID: name, Expanded: true}
-	dirs := map[string]*treeview.TreeNode{"": root}
-	count := 0
-	for _, f := range files {
-		if filter != nil && !filter(f) {
-			continue
-		}
-		count++
-		parts := strings.Split(f.Path, "/")
-		parent := root
-		dir := ""
-		for _, part := range parts[:len(parts)-1] {
-			dir += part + "/"
-			if dirs[dir] == nil {
-				n := &treeview.TreeNode{ID: name + "/" + dir, Label: part, Expanded: true}
-				parent.Children = append(parent.Children, n)
-				dirs[dir] = n
-			}
-			parent = dirs[dir]
-		}
-		status := f.Index
-		if stage {
-			status = f.Work
-		}
-		label := parts[len(parts)-1]
-		if f.From != "" {
-			label += "  ← " + f.From
-		}
-		parent.Children = append(parent.Children, &treeview.TreeNode{ID: name + "/" + f.Path, Label: fmt.Sprintf("%c   %s", status, label), Data: &fileItem{f, stage}})
-	}
-	root.Label = fmt.Sprintf("%s  (%d)", name, count)
-	return root
-}
-
 func (w *workbench) commitPanel(inline bool) widget.Widget {
 	c := w.commit
 	meta := []widget.Widget{w.text(c.Subject).Bold().MaxLines(3), w.muted(c.Author + "  <" + c.Email + ">")}
@@ -375,7 +326,7 @@ func (w *workbench) commitPanel(inline bool) widget.Widget {
 	}
 	meta = append(meta, row(w.btn("Create branch", button.Outlined, true, func() { w.branchAt(c.Hash) }), w.btn("Create tag", button.Outlined, true, func() { w.tagAt(c.Hash) })))
 	metadata := primitives.VBox(meta...).Padding(12).Gap(5)
-	files := w.fileTree(fileGroup("Changed files", w.changed, false, nil))
+	files := w.fileSection("Changed files", "No changed files", w.changed, false, 0, state.NewSignal(""))
 	if inline {
 		return w.inlineColumns(scrollview.New(metadata, scrollview.PainterOpt(w.paint.Scrollbar)), files)
 	}
@@ -426,7 +377,7 @@ func (w *workbench) changesPanel(inline bool) widget.Widget {
 		}))
 	}
 	actions := row(selectAction(true), selectAction(false), w.btn("Stage all", button.TextOnly, slices.ContainsFunc(d.Files, repo.File.Unstaged), func() { w.command("Stage all", "git", "add", "-A", "--", ".") })).PaddingXY(10, 6)
-	files := w.fileTree(fileGroup("Staged changes", d.Files, false, repo.File.Staged), fileGroup("Changes", d.Files, true, repo.File.Unstaged))
+	files := w.worktreeFiles(d.Files)
 	if inline {
 		return w.inlineColumns(controls, primitives.VBox(actions, line(w), primitives.Expanded(files)))
 	}

@@ -87,12 +87,14 @@ func Discover(ctx context.Context, path string) ([]string, error) {
 }
 
 type File struct {
-	Index, Work byte
-	Path, From  string
+	Index, Work         byte
+	Path, From          string
+	IndexStat, WorkStat DiffStat
+	Conflicted          bool
 }
 
-func (f File) Staged() bool   { return f.Index != ' ' && f.Index != '?' }
-func (f File) Unstaged() bool { return f.Work != ' ' }
+func (f File) Staged() bool   { return !f.Conflicted && f.Index != ' ' && f.Index != '?' }
+func (f File) Unstaged() bool { return f.Conflicted || f.Work != ' ' }
 
 type Commit struct {
 	Hash, Parents, Author, Email, Date, Refs, Subject, Body string
@@ -171,12 +173,16 @@ func LoadIfChanged(ctx context.Context, dir string, f Filter, previous [sha256.S
 	if err != nil {
 		return s, false, err
 	}
-	s.Revision = sha256.Sum256([]byte(strings.Join([]string{status, refs, remotes, stashes}, "\x00")))
-	if s.Revision == previous {
-		return s, false, nil
-	}
 	if err = parseStatus(status, &s); err != nil {
 		return s, false, err
+	}
+	indexStats, workStats, err := readWorkStats(ctx, dir, s.Files)
+	if err != nil {
+		return s, false, err
+	}
+	s.Revision = sha256.Sum256([]byte(strings.Join([]string{status, refs, remotes, stashes, indexStats, workStats}, "\x00")))
+	if s.Revision == previous {
+		return s, false, nil
 	}
 	for _, line := range lines(refs) {
 		fields := strings.Split(line, "\x00")
@@ -343,7 +349,7 @@ func parseStatus(raw string, s *Snapshot) error {
 			return fmt.Errorf("incomplete status record")
 		}
 		xy := strings.ReplaceAll(parts[1], ".", " ")
-		f := File{Index: xy[0], Work: xy[1], Path: parts[n-1]}
+		f := File{Index: xy[0], Work: xy[1], Path: parts[n-1], Conflicted: r[0] == 'u'}
 		if r[0] == '2' {
 			i++
 			if i >= len(records) {
@@ -358,13 +364,14 @@ func parseStatus(raw string, s *Snapshot) error {
 
 // ChangedPaths compares a merge to its first parent and includes root commits.
 func ChangedPaths(ctx context.Context, dir string, c Commit) ([]File, error) {
-	args := []string{"diff-tree", "--no-commit-id", "--name-status", "-r", "-M", "-z"}
+	args := []string{"--no-commit-id", "--no-ext-diff", "--no-textconv", "-r", "-M", "-z"}
 	if parents := strings.Fields(c.Parents); len(parents) > 0 {
 		args = append(args, parents[0])
 	} else {
 		args = append(args, "--root")
 	}
-	raw, err := Run(ctx, dir, "git", append(args, c.Hash, "--")...)
+	args = append(args, c.Hash, "--")
+	raw, err := Run(ctx, dir, "git", append([]string{"diff-tree", "--name-status"}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -381,6 +388,16 @@ func ChangedPaths(ctx context.Context, dir string, c Commit) ([]File, error) {
 			fields = fields[1:]
 		}
 		result = append(result, f)
+	}
+	if len(result) > 0 {
+		numstat, err := Run(ctx, dir, "git", append([]string{"diff-tree", "--numstat"}, args...)...)
+		if err != nil {
+			return nil, err
+		}
+		stats := parseNumstat(numstat)
+		for i := range result {
+			result[i].IndexStat = stats[result[i].Path]
+		}
 	}
 	return result, nil
 }

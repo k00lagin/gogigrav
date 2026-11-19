@@ -94,7 +94,7 @@ func (w *workbench) headerToolbar(hint state.Signal[string], items []toolbar.Ite
 	bar := toolbar.New(toolbar.Items(items...), toolbar.Height(titleBarHeight),
 		toolbar.ButtonSize(32), toolbar.ButtonHeight(32), toolbar.Gap(6),
 		toolbar.PainterOpt(actionToolbarPainter{painter, w}))
-	return &toolbarHints{Widget: bar, hint: hint}
+	return &toolbarHints{Widget: bar, hint: hint, bench: w}
 }
 
 func syncLabel(label string, count int) string {
@@ -107,8 +107,10 @@ func syncLabel(label string, count int) string {
 // Show the command name in the status bar on hover, including disabled actions.
 type toolbarHints struct {
 	*toolbar.Widget
+	bench       *workbench
 	hint        state.Signal[string]
 	branchLabel func() string
+	repoPath    string
 }
 
 func (t *toolbarHints) Event(ctx widget.Context, e event.Event) bool {
@@ -116,14 +118,27 @@ func (t *toolbarHints) Event(ctx widget.Context, e event.Event) bool {
 		switch mouse.MouseType {
 		case event.MouseEnter, event.MouseMove:
 			point := mouse.Position.Sub(t.Bounds().Min)
-			item := t.ItemAt(t.HitTestItem(point))
+			index := t.HitTestItem(point)
+			item := t.ItemAt(index)
 			label := item.Label
 			if t.branchLabel != nil && item.Icon.Name == branchIcon.Name {
 				label = t.branchLabel()
 			}
 			t.hint.Set(label)
+			if index == 0 && t.repoPath != "" {
+				label = t.repoPath
+			}
+			if mouse.Buttons != 0 || index < 0 || item.Kind != toolbar.ItemButton {
+				label = ""
+			}
+			t.bench.hoverToolbarItem(t, index, label)
 		case event.MouseLeave:
 			t.hint.Set("")
+			if t.bench.toolbarHover.bar == t {
+				t.bench.clearToolbarTooltip()
+			}
+		case event.MousePress:
+			t.bench.clearToolbarTooltip()
 		}
 	}
 	return t.Widget.Event(ctx, e)

@@ -65,7 +65,7 @@ func TestUnifiedCommitFileTreeScroll(t *testing.T) {
 		t.Fatalf("scroll leaked to history (%v -> %v)", start, y)
 	}
 	testClick(w, bounds.Min.Add(geometry.Pt(100, 85)))
-	if w.file == nil || w.file.file.Path != "file03.txt" {
+	if w.file == nil || w.file.file.Path != "file05.txt" {
 		t.Fatalf("click did not select the file at the scrolled position: %+v", w.file)
 	}
 	wheel(-1)
@@ -144,7 +144,7 @@ func TestUnifiedHistoryExpandsTheSelectedRow(t *testing.T) {
 		t.Fatalf("commit input did not receive typing: %q", got)
 	}
 	tree := files.ScreenBounds()
-	testClick(w, tree.Min.Add(geometry.Pt(100, 3*23+11)))
+	testClick(w, tree.Min.Add(geometry.Pt(100, fileRowHeight/2)))
 	if w.file == nil || w.file.file.Path != "pending.txt" {
 		t.Fatal("inline file tree did not receive the click")
 	}

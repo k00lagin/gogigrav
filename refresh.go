@@ -30,7 +30,7 @@ func (w *workbench) scheduleAutoRefresh() {
 
 func (w *workbench) checkAutoRefresh() {
 	w.scheduleAutoRefresh()
-	if w.path == "" || w.autoChecking || w.busy || w.prefs.Settings.DisableAutoRefresh || w.ui.Window().HasOverlays() {
+	if w.path == "" || w.autoChecking || w.busy || w.prefs.Settings.DisableAutoRefresh || w.ui.Window().Overlays().TopInteractive() != nil {
 		return
 	}
 	w.autoChecking = true
@@ -60,7 +60,7 @@ func (w *workbench) checkAutoRefresh() {
 	}, func(apply func(), err error) {
 		w.autoChecking = false
 		if apply != nil && err == nil && w.repoVersion == version && !w.busy &&
-			!w.prefs.Settings.DisableAutoRefresh && !w.ui.Window().HasOverlays() {
+			!w.prefs.Settings.DisableAutoRefresh && w.ui.Window().Overlays().TopInteractive() == nil {
 			apply()
 		}
 	})

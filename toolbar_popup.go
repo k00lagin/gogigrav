@@ -39,6 +39,7 @@ func (w *workbench) repositoryToolbar(hint state.Signal[string]) widget.Widget {
 	}
 	bar = w.headerToolbar(hint, items)
 	bar.branchLabel = w.branchFilterLabel
+	bar.repoPath = filepath.ToSlash(w.path)
 	w.branchBar = bar
 	return primitives.VBox(bar).Width(width)
 }
@@ -74,6 +75,7 @@ type popupAnchor interface {
 }
 
 func (w *workbench) openAnchoredPopup(trigger popupAnchor, id string, anchor func() geometry.Rect, placement popover.Placement, content, focus widget.Widget) {
+	w.clearToolbarTooltip()
 	ctx := w.ui.Window().Context()
 	alreadyOpen := w.popupIcon == id
 	w.closeToolbarPopup()

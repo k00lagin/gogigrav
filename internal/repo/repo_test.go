@@ -51,8 +51,9 @@ func TestIndexHistoryAndRenames(t *testing.T) {
 	}
 	index(true, true)
 	s = load(10)
-	if n := len(slices.DeleteFunc(s.Files, func(f File) bool { return !f.Staged() })); n != 1 {
-		t.Fatalf("staged %d files, want only literal path", n)
+	staged := slices.DeleteFunc(s.Files, func(f File) bool { return !f.Staged() })
+	if len(staged) != 1 || staged[0].IndexStat != (DiffStat{Added: 1, Text: true}) {
+		t.Fatalf("unborn index should contain one staged file with one added line: %+v", staged)
 	}
 	index(false, true)
 	if files := load(10).Files; slices.ContainsFunc(files, File.Staged) {
@@ -68,6 +69,9 @@ func TestIndexHistoryAndRenames(t *testing.T) {
 	if err != nil || len(paths) != 1 || paths[0].Path != selected.Path {
 		t.Fatal(paths, err)
 	}
+	if got := paths[0].IndexStat; got != (DiffStat{Added: 1, Text: true}) {
+		t.Errorf("root commit line counts = %+v", got)
+	}
 	git("mv", "--", selected.Path, "renamed.txt")
 	s = load(10)
 	i := slices.IndexFunc(s.Files, func(f File) bool { return f.Index == 'R' })
@@ -77,6 +81,9 @@ func TestIndexHistoryAndRenames(t *testing.T) {
 	selected = s.Files[i]
 	if selected.From != "a [1].txt" || selected.Path != "renamed.txt" {
 		t.Fatal(selected)
+	}
+	if selected.IndexStat != (DiffStat{Text: true}) {
+		t.Errorf("unchanged rename line counts = %+v", selected.IndexStat)
 	}
 	index(false, false)
 	if files := load(10).Files; slices.ContainsFunc(files, File.Staged) {
@@ -116,6 +123,47 @@ func TestIndexHistoryAndRenames(t *testing.T) {
 		return c.Subject == "Remote only" || strings.Contains(c.Refs, "origin/")
 	}) {
 		t.Fatal(commits, more, err)
+	}
+}
+
+func TestWorktreeLineCountsRefreshWithoutAStatusChange(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		if _, err := Run(t.Context(), dir, "git", args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put := func(text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "lines.txt"), []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-b", "main")
+	git("config", "user.name", "Tester")
+	git("config", "user.email", "tester@example.test")
+	put("one\ntwo\n")
+	git("add", "lines.txt")
+	git("-c", "commit.gpgsign=false", "commit", "-m", "Base")
+	put("one\nnew\nthree\n")
+	git("add", "lines.txt")
+	put("one\nnew\n")
+	filter := Filter{Limit: 10}
+	first, err := Load(t.Context(), dir, filter)
+	if err != nil || len(first.Files) != 1 {
+		t.Fatalf("worktree snapshot: %v, %v", first.Files, err)
+	}
+	file := first.Files[0]
+	if file.IndexStat != (DiffStat{Added: 2, Deleted: 1, Text: true}) ||
+		file.WorkStat != (DiffStat{Deleted: 1, Text: true}) {
+		t.Fatalf("partially staged stats: %+v", file)
+	}
+
+	put("one\nnew\nthree\nfour\nfive\n")
+	second, changed, err := LoadIfChanged(t.Context(), dir, filter, first.Revision)
+	if err != nil || !changed || len(second.Files) != 1 || second.Files[0].WorkStat != (DiffStat{Added: 2, Text: true}) {
+		t.Fatalf("updated worktree snapshot = %v, changed=%v, err=%v", second.Files, changed, err)
 	}
 }
 
