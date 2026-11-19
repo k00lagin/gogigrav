@@ -47,8 +47,19 @@ func (w *workbench) statusBar(hint state.Signal[string]) widget.Widget {
 		hints[checkout] = "Switch branch · " + w.currentBranchLabel()
 		if w.data.Upstream != "" {
 			hasRemote := len(w.data.Remotes) != 0
-			push := w.statusButton(strconv.Itoa(w.data.Ahead), pushIcon, hasRemote && w.data.CurrentBranch() != "", "", func() { w.syncBranch(true) })
-			pull := w.statusButton(strconv.Itoa(w.data.Behind), pullIcon, hasRemote, "", func() { w.syncBranch(false) })
+			syncButton := func(push bool, count int, glyph icon.IconData, enabled bool) *button.Widget {
+				id := "status-" + glyph.Name
+				var trigger *button.Widget
+				trigger = w.statusButton(strconv.Itoa(count), glyph, enabled, id, func() {
+					w.syncBranch(push, func() {
+						content, focus := w.syncOptionsPanel(push)
+						w.openAnchoredPopup(trigger, id, trigger.ScreenBounds, popover.TopEnd, content, focus)
+					})
+				})
+				return trigger
+			}
+			push := syncButton(true, w.data.Ahead, pushIcon, hasRemote && w.data.CurrentBranch() != "")
+			pull := syncButton(false, w.data.Behind, pullIcon, hasRemote)
 			hints[push] = syncLabel("Push to "+w.data.Upstream, w.data.Ahead)
 			hints[pull] = syncLabel("Pull from "+w.data.Upstream, w.data.Behind)
 			items = append(items, w.muted(w.data.Upstream).FontSize(12).MaxLines(1).Ellipsis(), push, pull)

@@ -41,13 +41,22 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 		item.Enabled = enabled && !w.busy
 		return item
 	}
-	options := func(label string, enabled bool, fn func()) toolbar.Item {
-		item := action(label, icon.ExpChevronDown, enabled, fn)
-		item.Width = 20
-		return item
-	}
 	items := []toolbar.Item{toolbar.Spacer()}
 	var bar *toolbarHints
+	addSync := func(push bool, label string, glyph icon.IconData, count int, enabled bool) {
+		index := len(items)
+		openAt := func(trigger int) {
+			content, focus := w.syncOptionsPanel(push)
+			w.openToolbarPopup(bar, trigger, popover.BottomEnd, content, focus)
+		}
+		chevron := icon.ExpChevronDown
+		chevron.Name = label + " options"
+		options := action(chevron.Name, chevron, enabled, func() { openAt(index + 1) })
+		options.Width = 20
+		items = append(items, action(syncLabel(label, count), glyph, enabled, func() {
+			w.syncBranch(push, func() { openAt(index) })
+		}), options)
+	}
 	if w.path != "" {
 		hasRemote := len(w.data.Remotes) > 0
 		hasHead := w.data.Head != ""
@@ -61,14 +70,10 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 				w.openToolbarPopup(bar, stashIndex, popover.BottomStart, content, focus)
 			}),
 			action("Fetch all remotes", fetchIcon, hasRemote, w.fetch),
-			action(syncLabel("Pull", w.data.Behind), pullIcon, hasRemote, func() { w.syncBranch(false) }),
-			options("Pull options", hasRemote, func() { w.syncBranchForm(false) }),
 		)
+		addSync(false, "Pull", pullIcon, w.data.Behind, hasRemote)
 		if hasRemote {
-			items = append(items,
-				action(syncLabel("Push", w.data.Ahead), pushIcon, hasBranch, func() { w.syncBranch(true) }),
-				options("Push options", hasBranch, func() { w.syncBranchForm(true) }),
-			)
+			addSync(true, "Push", pushIcon, w.data.Ahead, hasBranch)
 		} else {
 			items = append(items, action("Publish to GitHub", pushIcon, hasBranch, w.publishForm))
 		}
@@ -161,6 +166,7 @@ func (p actionToolbarPainter) PaintToolbar(widget.Canvas, toolbar.PaintToolbarSt
 
 func (p actionToolbarPainter) PaintButtonItem(canvas widget.Canvas, item toolbar.PaintButtonState) {
 	if !item.ShowLabel {
+		item.Hovered = item.Hovered || p.bench.popupIcon == item.Icon.Name
 		p.ToolbarPainter.PaintButtonItem(canvas, item)
 		return
 	}

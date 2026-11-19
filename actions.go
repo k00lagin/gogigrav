@@ -12,6 +12,7 @@ import (
 	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/scrollview"
 	"github.com/gogpu/ui/primitives"
+	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/widget"
 	"gogigrav/internal/repo"
 )
@@ -214,7 +215,7 @@ func (w *workbench) tagAt(ref string) {
 		return nil
 	}})
 }
-func (w *workbench) syncBranch(push bool) {
+func (w *workbench) syncBranch(push bool, openOptions func()) {
 	if w.busy || len(w.data.Remotes) == 0 {
 		return
 	}
@@ -232,7 +233,7 @@ func (w *workbench) syncBranch(push bool) {
 			return
 		}
 	}
-	w.syncBranchForm(push)
+	openOptions()
 }
 
 func (w *workbench) upstreamTarget() (string, string) {
@@ -257,47 +258,58 @@ func (w *workbench) pullBranch(label, remote, target string, rebase bool) {
 	})
 }
 
-func (w *workbench) syncBranchForm(push bool) {
+func (w *workbench) syncOptionsPanel(push bool) (widget.Widget, widget.Widget) {
 	current := w.data.CurrentBranch()
-	remote := choices("Remote", w.data.Remotes)
-	branch := &formField{label: "Remote branch", value: current}
-	upstream, target := w.upstreamTarget()
-	if upstream != "" {
-		remote.value, branch.value = upstream, target
-	} else if slices.Contains(remote.choices, "origin") {
-		remote.value = "origin"
-	}
-	validate := func(target string) error {
-		if remote.value == "" {
-			return errors.New("select a remote")
+	remotes := w.data.Remotes
+	upstream, branch := w.upstreamTarget()
+	remote := upstream
+	if remote == "" && len(remotes) != 0 {
+		remote, branch = remotes[0], current
+		if slices.Contains(remotes, "origin") {
+			remote = "origin"
 		}
-		return validName(target)
 	}
+	label, title := "Pull", "Pull options"
+	track, force, rebase := upstream == "", false, false
+	var flags []widget.Widget
 	if push {
-		if current == "" || w.data.Head == "" {
+		label, title = "Push", "Push "+current
+		flags = append(flags, w.check("Set upstream", track, true, func(on bool) { track = on }),
+			w.check("Force push with lease", force, true, func(on bool) { force = on }))
+	} else {
+		flags = append(flags, w.check("Rebase instead of merge", rebase, true, func(on bool) { rebase = on }))
+	}
+	message := state.NewSignal("")
+	submit := func(target string) {
+		target = strings.TrimSpace(target)
+		if remote == "" {
+			message.Set("Select a remote.")
 			return
 		}
-		track := flagField("Set upstream", upstream == "")
-		force := flagField("Force push with lease", false)
-		w.present("Push "+current, []*formField{remote, branch, track, force}, formAction{"Push", func() error {
-			target := strings.TrimSpace(branch.value)
-			if err := validate(target); err != nil {
-				return err
-			}
-			w.pushBranch(remote.value, current, target, track.checked, force.checked)
-			return nil
-		}})
-		return
-	}
-	rebase := flagField("Rebase instead of merge", false)
-	w.present("Pull", []*formField{remote, branch, rebase}, formAction{"Pull", func() error {
-		target := strings.TrimSpace(branch.value)
-		if err := validate(target); err != nil {
-			return err
+		if err := validName(target); err != nil {
+			message.Set(err.Error())
+			return
 		}
-		w.pullBranch("Pull from "+remote.value+"/"+target, remote.value, target, rebase.checked)
-		return nil
-	}})
+		w.selectPopupAction(func() {
+			if push {
+				w.pushBranch(remote, current, target, track, force)
+			} else {
+				w.pullBranch("Pull from "+remote+"/"+target, remote, target, rebase)
+			}
+		})
+	}
+	dest := w.input("Remote branch", branch, nil, submit)
+	children := []widget.Widget{
+		w.text(title).Bold(),
+		w.muted("Remote"), w.pick("Remote", remotes, slices.Index(remotes, remote), func(i int) { remote = remotes[i] }),
+		w.muted("Remote branch"), compactInput(dest),
+	}
+	children = append(children, flags...)
+	children = append(children, row(
+		primitives.Expanded(w.text("").Color(w.theme.Colors.Error).ContentSignal(message)),
+		w.btn(label, button.Filled, true, func() { submit(dest.Text()) }),
+	))
+	return primitives.VBox(children...).Width(320).Padding(12).Gap(6).CrossAlign(primitives.CrossAxisStretch), dest
 }
 func (w *workbench) addRemoteForm() {
 	name := &formField{label: "Remote name"}

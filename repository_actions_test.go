@@ -10,6 +10,7 @@ import (
 	"github.com/gogpu/gogpu"
 	"github.com/gogpu/ui/app"
 	"github.com/gogpu/ui/core/button"
+	"github.com/gogpu/ui/core/checkbox"
 	"github.com/gogpu/ui/core/textfield"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
@@ -139,6 +140,53 @@ func testWaitForGit(t *testing.T, w *workbench) {
 	testActionFrame(w)
 }
 
+func TestSyncOptionsOpenBesideTheirToolbarTriggers(t *testing.T) {
+	path := t.TempDir()
+	testGit(t, path, "init", "-b", "main")
+	testGit(t, path, "-c", "user.name=Tester", "-c", "user.email=tester@example.test",
+		"-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "First")
+	testGit(t, path, "remote", "add", "origin", t.TempDir())
+	w := testWorkbench(t, path)
+	win := w.ui.Window()
+	root := win.Root()
+
+	for _, label := range []string{"Pull options", "Push options", "Pull", "Push"} {
+		var anchor geometry.Rect
+		walkWidgets(w.titleBar, func(node widget.Widget) {
+			if bar, ok := node.(*toolbarHints); ok {
+				for i := range bar.ItemCount() {
+					if bar.ItemAt(i).Label == label {
+						anchor = bar.ItemBounds(i).Translate(bar.ScreenOrigin())
+					}
+				}
+			}
+		})
+		if anchor.IsEmpty() {
+			t.Fatalf("missing %s trigger", label)
+		}
+		testClick(w, anchor.Center())
+		w.ui.Frame()
+		win.DrawOverlays(&uitest.MockCanvas{})
+		controls := win.OverlayContentWidgets()
+		if len(controls) != 1 || w.openPopup == nil || w.page != "changes" || win.Root() != root {
+			t.Fatalf("%s should open a popup over the current page", label)
+		}
+		bounds := controls[0].(interface{ Bounds() geometry.Rect }).Bounds()
+		if bounds.Min.Y < anchor.Max.Y || bounds.Min.Y > anchor.Max.Y+16 ||
+			bounds.Max.X != anchor.Max.X {
+			t.Fatalf("%s popup %v is not aligned to the right edge of trigger %v", label, bounds, anchor)
+		}
+		field, ok := win.Context().FocusedWidget().(*textfield.Widget)
+		if !ok || field.Text() != "main" {
+			t.Fatalf("%s popup should focus the target branch with the current branch default", label)
+		}
+		win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEscape, 0, event.ModNone))
+		if win.HasOverlays() || w.openPopup != nil || w.busy {
+			t.Fatalf("Escape did not dismiss %s", label)
+		}
+	}
+}
+
 func TestStatusBranchAndSyncWithDifferentlyNamedUpstream(t *testing.T) {
 	base, remote := t.TempDir(), t.TempDir()
 	testGit(t, remote, "init", "--bare", "-b", "deployment")
@@ -165,26 +213,40 @@ func TestStatusBranchAndSyncWithDifferentlyNamedUpstream(t *testing.T) {
 		t.Fatalf("current branch = %s", w.data.Branch)
 	}
 
-	testToolbarAction(t, w, pullIcon.Name)
-	if w.form == nil || w.form.title != "Pull" {
-		t.Fatal("pull without an upstream should open options")
+	submitOptions := func(glyph, target string, toggleFirstFlag bool) {
+		t.Helper()
+		testToolbarAction(t, w, glyph)
+		win := w.ui.Window()
+		w.ui.Frame()
+		win.DrawOverlays(&uitest.MockCanvas{})
+		overlays := win.OverlayContentWidgets()
+		field, focused := win.Context().FocusedWidget().(*textfield.Widget)
+		if w.openPopup == nil || len(overlays) != 1 || !focused {
+			t.Fatalf("%s without an upstream should open its options popup", glyph)
+		}
+		if toggleFirstFlag {
+			var flag *checkbox.Widget
+			walkWidgets(overlays[0], func(node widget.Widget) {
+				if box, ok := node.(*checkbox.Widget); ok && flag == nil {
+					flag = box
+				}
+			})
+			if flag == nil {
+				t.Fatalf("%s options did not display a checkbox", glyph)
+			}
+			testClick(w, flag.ScreenBounds().Center())
+			win.Context().RequestFocus(field)
+		}
+		field.SetText(target)
+		win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
+		testApplyPopupAction(t, w)
+		if win.HasOverlays() {
+			t.Fatalf("%s did not dismiss the popup on submit", glyph)
+		}
+		testWaitForGit(t, w)
 	}
-	w.form.fields[1].value = "deployment"
-	w.form.fields[2].checked = true
-	if err := w.form.actions[0].run(); err != nil {
-		t.Fatal(err)
-	}
-	testWaitForGit(t, w)
-
-	testToolbarAction(t, w, pushIcon.Name)
-	if w.form == nil || w.form.title != "Push feature/topic" || !w.form.fields[2].checked {
-		t.Fatal("push without an upstream should open options with Set upstream selected")
-	}
-	w.form.fields[1].value = "preview"
-	if err := w.form.actions[0].run(); err != nil {
-		t.Fatal(err)
-	}
-	testWaitForGit(t, w)
+	submitOptions(pullIcon.Name, "deployment", true)
+	submitOptions(pushIcon.Name, "preview", false)
 	if w.data.UpstreamRemote != "origin" || w.data.UpstreamRef != "refs/heads/preview" {
 		t.Fatalf("unexpected upstream: %+v", w.data)
 	}
