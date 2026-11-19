@@ -64,12 +64,44 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 	ctx := w.ui.Window().Context()
 	previousFocus := ctx.FocusedWidget()
 	var window *dialog.Widget
+	var textLabels, mutedLabels []*primitives.TextWidget
+	text := func(value string) *primitives.TextWidget {
+		control := w.text(value)
+		textLabels = append(textLabels, control)
+		return control
+	}
+	muted := func(value string) *primitives.TextWidget {
+		control := w.muted(value)
+		mutedLabels = append(mutedLabels, control)
+		return control
+	}
+	separator := primitives.Box().Height(1).Background(w.theme.Colors.Border)
+	apply := func() {
+		if w.applySettings(next, light) {
+			colors := w.theme.Colors
+			for _, control := range textLabels {
+				control.Color(colors.OnSurface)
+			}
+			for _, control := range mutedLabels {
+				control.Color(colors.OnSurfaceSecondary)
+			}
+			separator.Background(colors.Border)
+			for _, overlay := range w.ui.Window().OverlayContentWidgets() {
+				widget.MarkRedrawInTree(overlay)
+			}
+			ctx.Invalidate()
+		}
+	}
 
-	label := func(text string) widget.Widget {
-		return primitives.VBox(w.text(text).MaxLines(1)).Width(160).CrossAlign(primitives.CrossAxisStretch)
+	label := func(title string) widget.Widget {
+		return primitives.VBox(text(title).MaxLines(1)).Width(160).CrossAlign(primitives.CrossAxisStretch)
 	}
 	chosen := func(title string, labels []string, index int, change func(int)) widget.Widget {
-		picker := w.pick(title, labels, max(0, index), change)
+		picker := dropdown.New(dropdown.Items(labels...), dropdown.Placeholder(title), dropdown.Selected(max(0, index)),
+			dropdown.MaxVisibleItems(12), dropdown.PainterOpt(w.paint.Dropdown), dropdown.OnChange(func(i int, _ string) {
+				change(i)
+				apply()
+			}))
 		width := float32(72)
 		for _, option := range labels {
 			width = max(width, float32(len(option))*7+44)
@@ -77,12 +109,15 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 		return row(label(title), primitives.VBox(picker).Width(width).Height(28))
 	}
 	section := func(name string, children ...widget.Widget) widget.Widget {
-		return primitives.VBox(append([]widget.Widget{w.muted(strings.ToUpper(name)).FontSize(10).Bold()}, children...)...).
+		return primitives.VBox(append([]widget.Widget{muted(strings.ToUpper(name)).FontSize(10).Bold()}, children...)...).
 			Gap(4).CrossAlign(primitives.CrossAxisStretch)
 	}
-	hint := func(text string) *primitives.TextWidget { return w.muted(text).FontSize(11) }
+	hint := func(value string) *primitives.TextWidget { return muted(value).FontSize(11) }
 	check := func(title, description string, checked bool, change func(bool)) widget.Widget {
-		control := w.check(title, checked, true, change)
+		control := w.check(title, checked, true, func(on bool) {
+			change(on)
+			apply()
+		})
 		if description == "" {
 			return control
 		}
@@ -134,6 +169,7 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 			if i != 2 {
 				light = i == 0
 			}
+			apply()
 		}))
 	importTheme := w.btn("Import…", button.Outlined, true, func() {
 		paths, err := w.host.ShowOpenFileDialog(gogpu.FileDialogOptions{Title: "Import VS Code theme",
@@ -149,7 +185,7 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 			next.ImportedTheme, next.UseImportedTheme = theme, true
 			themes.Set(themeItems())
 			picker.SetSelectedIndex(2)
-			ctx.Invalidate()
+			apply()
 		}
 	})
 	theme := section("Theme",
@@ -161,7 +197,7 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 	)
 	user := state.NewSignal(identityLabel(identity))
 	repository := section("Repository",
-		row(label("User"), primitives.Expanded(w.muted("").ContentSignal(user).MaxLines(1).Ellipsis()),
+		row(label("User"), primitives.Expanded(muted("").ContentSignal(user).MaxLines(1).Ellipsis()),
 			w.btn("Edit…", button.Outlined, w.path != "", func() {
 				w.editIdentity(identity, func(saved repo.Identity) {
 					identity = saved
@@ -173,14 +209,13 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 	content := primitives.VBox(history, display, theme, remote, repository).Gap(12).PaddingXY(16, 12).
 		CrossAlign(primitives.CrossAxisStretch)
 	closeButton := w.btn("×", button.TextOnly, true, func() { window.Close(ctx) })
-	header := row(primitives.Expanded(w.text("Settings").Bold().FontSize(15)), closeButton).Height(43).PaddingXY(12, 4)
+	header := row(primitives.Expanded(text("Settings").Bold().FontSize(15)), closeButton).Height(43).PaddingXY(12, 4)
 	body := scrollview.New(content, scrollview.PainterOpt(w.paint.Scrollbar))
-	window = dialog.New(dialog.ContentOnly(), dialog.Content(primitives.VBox(header, line(w), body).CrossAlign(primitives.CrossAxisStretch)),
+	window = dialog.New(dialog.ContentOnly(), dialog.Content(primitives.VBox(header, separator, body).CrossAlign(primitives.CrossAxisStretch)),
 		dialog.MaxWidth(550), dialog.MaxHeight(720), dialog.PainterOpt(w.paint.Dialog), dialog.OnClose(func() {
 			if previousFocus != nil && !widget.IsDetached(previousFocus) {
 				ctx.RequestFocus(previousFocus)
 			}
-			w.applySettings(next, light)
 		}))
 	window.Show(ctx)
 	ctx.RequestFocus(closeButton)
@@ -193,20 +228,31 @@ func boolIndex(value bool) int {
 	return 0
 }
 
-func (w *workbench) applySettings(next viewSettings, light bool) {
+func (w *workbench) refreshSettingsHistory() {
+	if w.settingsRefresh && !w.busy {
+		w.settingsRefresh = false
+		w.refresh(w.filter)
+	}
+}
+
+func (w *workbench) applySettings(next viewSettings, light bool) (themeChanged bool) {
 	prev := w.prefs.Settings
 	if prev == next && w.prefs.Light == light {
-		return
+		return false
 	}
-	themeChanged := w.prefs.Light != light || prev.UseImportedTheme != next.UseImportedTheme ||
+	themeChanged = w.prefs.Light != light || prev.UseImportedTheme != next.UseImportedTheme ||
 		(next.UseImportedTheme && prev.ImportedTheme != next.ImportedTheme)
 	w.prefs.Light, w.prefs.Settings = light, next
 	w.prefs.save(w.settingsPath)
 	w.repoVersion++
 	w.scheduleAutoRefresh()
 	if themeChanged {
+		wasDark := w.theme.IsDark()
 		w.setTheme()
 		w.ui.SetTheme(w.theme.AsTheme())
+		if wasDark != w.theme.IsDark() {
+			w.refreshPreview()
+		}
 	}
 	if themeChanged || prev.ShowCommitter != next.ShowCommitter {
 		w.table = nil
@@ -221,9 +267,10 @@ func (w *workbench) applySettings(next viewSettings, light bool) {
 	if countChanged {
 		f.Limit = want.Limit
 	}
-	w.settingsRefresh = w.path != "" && historyChanged
+	w.settingsRefresh = w.settingsRefresh || (w.path != "" && historyChanged)
 	w.filterRows()
 	w.redraw()
+	return themeChanged
 }
 
 func identityLabel(identity repo.Identity) string {

@@ -181,10 +181,7 @@ func main() {
 			apply()
 		default:
 		}
-		if w.settingsRefresh && !w.busy {
-			w.settingsRefresh = false
-			w.refresh(w.filter)
-		}
+		w.refreshSettingsHistory()
 		select {
 		case <-w.autoRefreshTick:
 			w.checkAutoRefresh()
@@ -216,13 +213,20 @@ func main() {
 }
 
 func (w *workbench) setTheme() {
+	var theme *devtools.Theme
 	if w.prefs.Light {
-		w.theme = devtools.NewTheme()
+		theme = devtools.NewTheme()
 	} else {
-		w.theme = devtools.NewDarkTheme()
+		theme = devtools.NewDarkTheme()
 	}
 	if settings := w.prefs.Settings; settings.UseImportedTheme && settings.ImportedTheme != nil {
-		w.theme = settings.ImportedTheme.theme(w.theme)
+		theme = settings.ImportedTheme.theme(theme)
+	}
+	if w.theme == nil {
+		w.theme = theme
+	} else {
+		// Open overlays retain painters that share this theme pointer.
+		*w.theme = *theme
 	}
 	w.paint = devtools.NewPainters(w.theme)
 	w.setGraphPalette()
@@ -333,6 +337,9 @@ func (w *workbench) refresh(f repo.Filter) {
 	w.job("Refresh history", func(ctx context.Context) (func(), error) {
 		data, err := repo.Load(ctx, path, f)
 		return func() {
+			if w.settingsRefresh {
+				return // A newer set of history settings is waiting to reload.
+			}
 			w.data, w.filter = data, f
 			w.file = nil
 			w.filterRows()

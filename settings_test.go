@@ -32,6 +32,9 @@ func TestSettingsDialogInputAndPersistence(t *testing.T) {
 
 	win := w.ui.Window()
 	draw := func() {
+		if w.dirty {
+			w.render()
+		}
 		w.ui.Frame()
 		win.DrawOverlays(&uitest.MockCanvas{})
 	}
@@ -69,14 +72,29 @@ func TestSettingsDialogInputAndPersistence(t *testing.T) {
 	if got := dropdowns[1].SelectedValue(); got != "100" || win.OverlayCount() != 1 {
 		t.Fatalf("commit count after selection = %q, overlays = %d", got, win.OverlayCount())
 	}
+	if w.filter.Limit != 100 || !w.settingsRefresh {
+		t.Fatal("commit count did not apply while settings were open")
+	}
+	w.refreshSettingsHistory()
 	draw()
 	testClick(w, checks[0].ScreenBounds().Center())
 	testClick(w, checks[3].ScreenBounds().Center())
+	draw()
+	if w.table.GetRowCount() != 1 || w.filter.Remote || !w.settingsRefresh || win.OverlayCount() != 1 {
+		t.Fatal("changes made during history reload did not update the open workspace")
+	}
+	testWaitForGit(t, w)
+	if w.filter.Remote {
+		t.Fatal("an older history reload overwrote the remote setting")
+	}
+	w.refreshSettingsHistory()
+	testWaitForGit(t, w)
 
 	point := scroll.ScreenBounds().Center()
 	win.HandleEvent(event.NewWheelEvent(geometry.Pt(0, 100), point, point, event.ModNone))
 	draw()
-	if _, offset := scroll.ScrollOffset(); offset <= 0 {
+	_, offset := scroll.ScrollOffset()
+	if offset <= 0 {
 		t.Fatal("cannot scroll to the Repository section on a small window")
 	}
 	themePicker := dropdowns[len(dropdowns)-1]
@@ -90,6 +108,30 @@ func TestSettingsDialogInputAndPersistence(t *testing.T) {
 		t.Fatalf("selected theme = %q", got)
 	}
 	draw()
+	if _, got := scroll.ScrollOffset(); got != offset || win.OverlayCount() != 1 || w.theme.IsDark() {
+		t.Fatal("theme did not update the open settings dialog in place")
+	}
+	canvas := &uitest.MockCanvas{}
+	win.DrawOverlays(canvas)
+	foundSurface := false
+	for _, rect := range canvas.RoundRects {
+		if rect.Color == w.theme.Colors.Surface {
+			foundSurface = true
+			break
+		}
+	}
+	if !foundSurface {
+		t.Fatal("open settings dialog was not painted with the new theme")
+	}
+	data, err := os.ReadFile(w.settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved preferences
+	if err := json.Unmarshal(data, &saved); err != nil || !saved.Light || saved.Settings.InitialCommits != 100 ||
+		!saved.Settings.HideRemotes || !saved.Settings.HideUncommitted {
+		t.Fatalf("preferences on disk before closing = %+v, err = %v", saved, err)
+	}
 	testClick(w, buttons[2].ScreenBounds().Center())
 	draw()
 	if win.OverlayCount() != 2 {
@@ -117,18 +159,9 @@ func TestSettingsDialogInputAndPersistence(t *testing.T) {
 	}
 	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEscape, 0, event.ModNone))
 	testActionFrame(w)
-	if win.HasOverlays() || !w.settingsRefresh || w.filter.Limit != 100 || w.filter.Remote ||
+	if win.HasOverlays() || w.settingsRefresh || w.filter.Limit != 100 || w.filter.Remote ||
 		w.table.GetRowCount() != 1 || w.theme.IsDark() {
 		t.Fatalf("settings not applied: overlays=%d filter=%+v rows=%d", win.OverlayCount(), w.filter, w.table.GetRowCount())
-	}
-	data, err := os.ReadFile(w.settingsPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var saved preferences
-	if err := json.Unmarshal(data, &saved); err != nil || !saved.Light || saved.Settings.InitialCommits != 100 ||
-		!saved.Settings.HideRemotes || !saved.Settings.HideUncommitted {
-		t.Fatalf("preferences on disk = %+v, err = %v", saved, err)
 	}
 }
 
