@@ -71,20 +71,8 @@ func (w *workbench) render() {
 	w.dirty = false
 	cs := w.theme.Colors
 	hint := state.NewSignal("")
-	header := []widget.Widget{w.repositoryToolbar(hint)}
 	active := w.path != ""
-	if active {
-		header = append(header,
-			w.check("Remote branches", w.filter.Remote, true, func(v bool) {
-				f := w.filter
-				f.Remote = v
-				if !v && strings.HasPrefix(f.Ref, "refs/remotes/") {
-					f.Ref = ""
-				}
-				w.refresh(f)
-			}))
-	}
-	w.titleBar = w.newTitleBar(row(header...).PaddingLeft(4), w.actionToolbar(hint))
+	w.titleBar = w.newTitleBar(row(w.repositoryToolbar(hint)).PaddingLeft(4), w.actionToolbar(hint))
 	w.searchField = nil
 	var body widget.Widget
 	if active {
@@ -96,7 +84,11 @@ func (w *workbench) render() {
 			}, nil)
 			find = compactInput(w.searchField)
 		}
-		historyBar := row(w.text("History").Bold(), primitives.Expanded(find), w.btn("Load more", button.TextOnly, w.data.More, func() { f := w.filter; f.Limit += 250; w.refresh(f) })).PaddingXY(10, 5).Background(cs.Surface)
+		w.loadMoreDisabled = state.NewSignal(!w.data.More || w.busy)
+		loadMore := button.New(button.TextOpt("Load more"), button.VariantOpt(button.TextOnly),
+			button.SizeOpt(button.Small), button.DisabledSignal(w.loadMoreDisabled), button.PainterOpt(w.paint.Button),
+			button.OnClick(func() { f := w.filter; f.Limit += 250; w.refresh(f) }))
+		historyBar := row(w.text("History").Bold(), primitives.Expanded(find), loadMore).PaddingXY(10, 5).Background(cs.Surface)
 		if w.table == nil {
 			w.table = w.historyTable()
 		}
@@ -105,21 +97,25 @@ func (w *workbench) render() {
 	} else {
 		body = primitives.VBox(w.panel()).Padding(26).Background(cs.Background)
 	}
-	state := w.status
-	if active && state == "" {
-		tracking := ""
-		if w.data.Upstream != "" {
-			tracking = fmt.Sprintf("   %s ↑%d ↓%d", w.data.Upstream, w.data.Ahead, w.data.Behind)
-		}
-		state = fmt.Sprintf("%s%s     %d commits     %d changes     %d stashes", w.data.Branch, tracking, len(w.data.Commits), len(w.data.Files), len(w.data.Stashes))
-	}
-	footer := row(primitives.Expanded(w.muted(state).MaxLines(1).Ellipsis()),
+	w.statusText = state.NewSignal(w.historyStatus())
+	footer := row(primitives.Expanded(w.muted("").ContentSignal(w.statusText).MaxLines(1).Ellipsis()),
 		w.muted("").ContentSignal(hint).MaxLines(1).Ellipsis(), w.muted(w.path).MaxLines(1).Ellipsis()).PaddingXY(10, 4).Background(cs.Surface)
 	w.ui.SetRoot(primitives.VBox(w.titleBar, primitives.Expanded(body), line(w), footer).Background(cs.Background))
 	if w.focusSearch && w.searchField != nil {
 		w.focusSearch = false
 		w.ui.Window().Context().RequestFocus(w.searchField)
 	}
+}
+
+func (w *workbench) historyStatus() string {
+	if w.path == "" || w.status != "" {
+		return w.status
+	}
+	tracking := ""
+	if w.data.Upstream != "" {
+		tracking = fmt.Sprintf("   %s ↑%d ↓%d", w.data.Upstream, w.data.Ahead, w.data.Behind)
+	}
+	return fmt.Sprintf("%s%s     %d commits     %d changes     %d stashes", w.data.Branch, tracking, len(w.data.Commits), len(w.data.Files), len(w.data.Stashes))
 }
 
 func (w *workbench) showSearch() {

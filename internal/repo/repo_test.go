@@ -93,9 +93,29 @@ func TestIndexHistoryAndRenames(t *testing.T) {
 		t.Fatal(paths, err)
 	}
 	git("branch", "older", "HEAD~")
-	s, err = Load(t.Context(), dir, Filter{Ref: "refs/heads/older", Limit: 10})
+	s, err = Load(t.Context(), dir, Filter{Refs: []string{"refs/heads/older"}, Limit: 10})
 	if err != nil || len(s.Commits) != 1 || s.Commits[0].Subject != "Root" {
 		t.Fatal(s.Commits, err)
+	}
+
+	git("switch", "--detach", "HEAD~")
+	git("commit", "--allow-empty", "-m", "Remote only")
+	git("update-ref", "refs/remotes/origin/topic", "HEAD")
+	git("update-ref", "refs/remotes/origin/shared", "HEAD~")
+	git("switch", "main")
+	f := Filter{Refs: []string{"refs/heads/main", "refs/remotes/origin/topic"}, Remote: true, Limit: 10}
+	s, err = Load(t.Context(), dir, f)
+	if err != nil || len(s.Commits) != 3 || !slices.ContainsFunc(s.Commits, func(c Commit) bool {
+		return c.Subject == "Remote only" && strings.Contains(c.Refs, "origin/topic")
+	}) {
+		t.Fatal(s.Commits, err)
+	}
+	f.Remote = false
+	commits, more, err := LoadHistory(t.Context(), dir, s, f)
+	if err != nil || more || len(commits) != 2 || slices.ContainsFunc(commits, func(c Commit) bool {
+		return c.Subject == "Remote only" || strings.Contains(c.Refs, "origin/")
+	}) {
+		t.Fatal(commits, more, err)
 	}
 }
 

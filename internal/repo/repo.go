@@ -99,9 +99,21 @@ type Snapshot struct {
 	More                       bool
 }
 type Filter struct {
-	Ref    string
+	Refs   []string
 	Remote bool
 	Limit  int
+}
+
+const RemoteRefPrefix = "refs/remotes/"
+
+// VisibleRefs returns the selected refs that can contribute to the history.
+func (f Filter) VisibleRefs() []string {
+	if f.Remote {
+		return f.Refs
+	}
+	return slices.DeleteFunc(slices.Clone(f.Refs), func(ref string) bool {
+		return strings.HasPrefix(ref, RemoteRefPrefix)
+	})
 }
 
 func Load(ctx context.Context, dir string, f Filter) (Snapshot, error) {
@@ -133,15 +145,23 @@ func Load(ctx context.Context, dir string, f Filter) (Snapshot, error) {
 		return s, err
 	}
 	s.Stashes = lines(stashes)
+	s.Commits, s.More, err = LoadHistory(ctx, dir, s, f)
+	return s, err
+}
+
+// LoadHistory reads commits for the filter using the last known repository metadata.
+func LoadHistory(ctx context.Context, dir string, s Snapshot, f Filter) ([]Commit, bool, error) {
 	args := []string{"log", "--no-color", "--decorate=short", "--date-order", "-z", "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%D%x00%s%x00%b", "-n", strconv.Itoa(f.Limit + 1)}
 	if !f.Remote {
-		args = append(args, "--decorate-refs-exclude=refs/remotes/*")
+		args = append(args, "--decorate-refs-exclude="+RemoteRefPrefix+"*")
 	}
-	if f.Ref != "" {
-		if !slices.Contains(s.Branches, f.Ref) {
-			return s, fmt.Errorf("branch %s is no longer available", f.Ref)
+	if refs := f.VisibleRefs(); len(refs) > 0 {
+		for _, ref := range refs {
+			if !slices.Contains(s.Branches, ref) {
+				return nil, false, fmt.Errorf("branch %s is no longer available", ref)
+			}
 		}
-		args = append(args, f.Ref)
+		args = append(args, refs...)
 	} else {
 		args = append(args, "--branches", "--tags")
 		if f.Remote {
@@ -154,21 +174,21 @@ func Load(ctx context.Context, dir string, f Filter) (Snapshot, error) {
 			args = append(args, "HEAD")
 		}
 	}
-	raw, err := git(append(args, "--")...)
+	raw, err := Run(ctx, dir, "git", append(args, "--")...)
 	if err != nil {
-		return s, err
+		return nil, false, err
 	}
+	var commits []Commit
 	fields := strings.Split(strings.TrimSuffix(raw, "\x00"), "\x00")
 	for len(fields) >= 8 {
 		c := Commit{fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], strings.TrimSpace(fields[7])}
-		s.Commits = append(s.Commits, c)
+		commits = append(commits, c)
 		fields = fields[8:]
 	}
-	if len(s.Commits) > f.Limit {
-		s.More = true
-		s.Commits = s.Commits[:f.Limit]
+	if len(commits) > f.Limit {
+		return commits[:f.Limit], true, nil
 	}
-	return s, nil
+	return commits, false, nil
 }
 
 func lines(s string) []string {

@@ -89,6 +89,13 @@ type workbench struct {
 	drafts      map[string]string
 	form        *actionForm
 	amend       bool
+
+	collapsedBranchGroups map[branchGroupKey]bool
+
+	branchFilter     *repo.Filter
+	branchBar        *toolbarHints
+	loadMoreDisabled state.Signal[bool]
+	statusText       state.Signal[string]
 }
 
 func main() {
@@ -186,21 +193,25 @@ func (w *workbench) job(label string, work func(context.Context) (func(), error)
 	w.busy = true
 	w.status = label + "…"
 	w.redraw()
+	w.runJob(work, func(apply func(), err error) {
+		w.busy = false
+		w.status = ""
+		if err != nil {
+			w.status = err.Error()
+			w.showError(err)
+		} else if apply != nil {
+			apply()
+		}
+		w.redraw()
+	})
+}
+
+func (w *workbench) runJob(work func(context.Context) (func(), error), finish func(func(), error)) {
 	go func() {
 		ctx, cancel := context.WithTimeout(w.ctx, 5*time.Minute)
 		defer cancel()
 		apply, err := work(ctx)
-		w.done <- func() {
-			w.busy = false
-			w.status = ""
-			if err != nil {
-				w.status = err.Error()
-				w.showError(err)
-			} else if apply != nil {
-				apply()
-			}
-			w.redraw()
-		}
+		w.done <- func() { finish(apply, err) }
 		w.host.RequestRedraw()
 	}()
 }
@@ -265,6 +276,57 @@ func (w *workbench) refresh(f repo.Filter) {
 		return func() { w.data, w.filter = data, f; w.file = nil; w.filterRows() }, err
 	})
 }
+
+func (w *workbench) refreshBranchHistory(f repo.Filter) {
+	if w.busy && w.branchFilter == nil {
+		return
+	}
+	loading := w.branchFilter != nil
+	w.branchFilter = &f
+	if loading {
+		return
+	}
+	w.busy = true
+	w.statusText.Set("Refresh history…")
+	w.loadMoreDisabled.Set(true)
+	w.loadBranchHistory()
+}
+
+func (w *workbench) loadBranchHistory() {
+	filter, path, data := w.branchFilter, w.path, w.data
+	w.runJob(func(ctx context.Context) (func(), error) {
+		commits, more, err := repo.LoadHistory(ctx, path, data, *filter)
+		return func() {
+			w.filter = *filter
+			w.data.Commits, w.data.More = commits, more
+			w.filterRows()
+		}, err
+	}, func(apply func(), err error) {
+		// Coalesce checkbox and switch changes made while Git was reading.
+		if filter != w.branchFilter {
+			w.loadBranchHistory()
+			return
+		}
+		w.branchFilter, w.busy, w.status = nil, false, ""
+		if err != nil {
+			w.closeToolbarPopup()
+			w.status = err.Error()
+			w.showError(err)
+			w.redraw()
+			return
+		}
+		apply()
+		if w.popupIcon != branchIcon.Name {
+			w.redraw()
+			return
+		}
+		w.statusText.Set(w.historyStatus())
+		w.loadMoreDisabled.Set(!w.data.More)
+		w.branchBar.SetNeedsRedraw(true)
+		w.ui.Window().Context().InvalidateRect(w.branchBar.ScreenBounds())
+	})
+}
+
 func (w *workbench) filterRows() {
 	needle := strings.ToLower(strings.TrimSpace(w.search))
 	w.rows = nil
@@ -294,8 +356,8 @@ func (w *workbench) operation(label string, op func(context.Context) error, afte
 		actionErr := op(ctx)
 		// Even a failed operation can change HEAD, refs or the index.
 		data, readErr := repo.Load(ctx, path, f)
-		if readErr != nil && f.Ref != "" {
-			f.Ref = ""
+		if readErr != nil && len(f.Refs) > 0 {
+			f.Refs = nil
 			data, readErr = repo.Load(ctx, path, f)
 		}
 		return func() {

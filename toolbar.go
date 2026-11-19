@@ -103,7 +103,8 @@ func syncLabel(label string, count int) string {
 // Show the command name in the status bar on hover, including disabled actions.
 type toolbarHints struct {
 	*toolbar.Widget
-	hint state.Signal[string]
+	hint        state.Signal[string]
+	branchLabel func() string
 }
 
 func (t *toolbarHints) Event(ctx widget.Context, e event.Event) bool {
@@ -111,7 +112,12 @@ func (t *toolbarHints) Event(ctx widget.Context, e event.Event) bool {
 		switch mouse.MouseType {
 		case event.MouseEnter, event.MouseMove:
 			point := mouse.Position.Sub(t.Bounds().Min)
-			t.hint.Set(t.ItemAt(t.HitTestItem(point)).Label)
+			item := t.ItemAt(t.HitTestItem(point))
+			label := item.Label
+			if t.branchLabel != nil && item.Icon.Name == branchIcon.Name {
+				label = t.branchLabel()
+			}
+			t.hint.Set(label)
 		case event.MouseLeave:
 			t.hint.Set("")
 		}
@@ -147,7 +153,11 @@ func (p actionToolbarPainter) PaintButtonItem(canvas widget.Canvas, item toolbar
 	label := geometry.NewRect(bounds.Min.X+29, bounds.Min.Y, chevron.Min.X-bounds.Min.X-30, bounds.Height())
 	if !label.IsEmpty() {
 		canvas.PushClip(label)
-		canvas.DrawText(item.Label, label, 13, color, false, widget.TextAlignLeft)
+		text := item.Label
+		if item.Icon.Name == branchIcon.Name {
+			text = p.bench.branchFilterLabel()
+		}
+		canvas.DrawText(text, label, 13, color, false, widget.TextAlignLeft)
 		canvas.PopClip()
 	}
 	icon.Draw(canvas, icon.ExpChevronDown, chevron, color)

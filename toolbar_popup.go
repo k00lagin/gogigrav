@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -33,15 +34,25 @@ func (w *workbench) repositoryToolbar(hint state.Signal[string]) widget.Widget {
 	items := []toolbar.Item{w.selector(name, icon.ExpFolder, repoWidth, func() { w.repositoriesPopup(bar, 0) })}
 	width := float32(repoWidth)
 	if w.path != "" {
-		label := "All branches"
-		if w.filter.Ref != "" {
-			label = shortRef(w.filter.Ref)
-		}
-		items = append(items, w.selector(label, branchIcon, branchWidth, func() { w.branchesPopup(bar, 1) }))
+		items = append(items, w.selector(w.branchFilterLabel(), branchIcon, branchWidth, func() { w.branchesPopup(bar, 1) }))
 		width += branchWidth + gap
 	}
 	bar = w.headerToolbar(hint, items)
+	bar.branchLabel = w.branchFilterLabel
+	w.branchBar = bar
 	return primitives.VBox(bar).Width(width)
+}
+
+func (w *workbench) branchFilterLabel() string {
+	refs := w.filter.VisibleRefs()
+	switch len(refs) {
+	case 0:
+		return "All branches"
+	case 1:
+		return shortRef(refs[0])
+	default:
+		return fmt.Sprintf("%d branches", len(refs))
+	}
 }
 
 // openToolbarPopup accepts any widget tree as its content. The optional focus
@@ -121,25 +132,6 @@ func (w *workbench) repositoriesPopup(bar *toolbarHints, index int) {
 		w.selectPopupAction(func() { w.show("open") })
 	})
 	content, focus := w.choicePanel(355, 42, "Search repositories", choices, add)
-	w.openToolbarPopup(bar, index, popover.BottomStart, content, focus)
-}
-
-func (w *workbench) branchesPopup(bar *toolbarHints, index int) {
-	show := func(ref string) {
-		filter := w.filter
-		filter.Ref = ref
-		w.refresh(filter)
-	}
-	choices := []popupChoice{{label: "All branches", current: w.filter.Ref == "", action: func() { show("") }}}
-	for _, ref := range w.data.Branches {
-		if !w.filter.Remote && strings.HasPrefix(ref, "refs/remotes/") {
-			continue
-		}
-		choices = append(choices, popupChoice{
-			label: shortRef(ref), current: ref == w.filter.Ref, action: func() { show(ref) },
-		})
-	}
-	content, focus := w.choicePanel(330, 28, "Search branches", choices)
 	w.openToolbarPopup(bar, index, popover.BottomStart, content, focus)
 }
 
