@@ -18,6 +18,7 @@ import (
 	"github.com/gogpu/ui/core/textfield"
 	"github.com/gogpu/ui/core/treeview"
 	"github.com/gogpu/ui/primitives"
+	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/widget"
 	"gogigrav/internal/repo"
 )
@@ -77,7 +78,7 @@ func (w *workbench) render() {
 			w.open(w.prefs.Recent[i])
 		}
 	})
-	header := []widget.Widget{primitives.VBox(picker).Width(184)}
+	header := []widget.Widget{primitives.VBox(picker).Width(184).Height(30)}
 	active := w.path != ""
 	if active {
 		refs := []string{""}
@@ -89,7 +90,7 @@ func (w *workbench) render() {
 			refs = append(refs, r)
 			branches = append(branches, shortRef(r))
 		}
-		header = append(header, primitives.VBox(w.pick("Branches", branches, slices.Index(refs, w.filter.Ref), func(i int) { f := w.filter; f.Ref = refs[i]; w.refresh(f) })).Width(167),
+		header = append(header, primitives.VBox(w.pick("Branches", branches, slices.Index(refs, w.filter.Ref), func(i int) { f := w.filter; f.Ref = refs[i]; w.refresh(f) })).Width(167).Height(30),
 			w.check("Remote branches", w.filter.Remote, true, func(v bool) {
 				f := w.filter
 				f.Remote = v
@@ -99,24 +100,20 @@ func (w *workbench) render() {
 				w.refresh(f)
 			}))
 	}
-	header = append(header, primitives.Expanded(primitives.Box()))
-	if active {
-		header = append(header, w.btn("Branch", button.TextOnly, w.data.Head != "", w.branchForm), w.btn("Stash", button.TextOnly, true, w.stashForm),
-			w.btn("Fetch", button.TextOnly, len(w.data.Remotes) > 0, func() { w.command("Fetch", "git", "fetch", "--all", "--prune") }),
-			w.btn("Pull", button.TextOnly, len(w.data.Remotes) > 0, func() { w.syncBranch(false) }))
-		if len(w.data.Remotes) == 0 {
-			header = append(header, w.btn("Publish", button.Outlined, w.data.Head != "", w.publishForm))
-		} else {
-			header = append(header, w.btn("Push", button.Outlined, w.data.Head != "", func() { w.syncBranch(true) }))
-		}
-		header = append(header, w.btn("Remotes", button.TextOnly, true, w.remotesForm), w.btn("Refresh", button.TextOnly, true, func() { w.refresh(w.filter) }))
-	}
-	header = append(header, w.btn("Settings", button.TextOnly, true, func() { w.show("settings") }))
+	hint := state.NewSignal("")
+	header = append(header, primitives.Expanded(w.actionToolbar(hint)))
+	w.searchField = nil
 	var body widget.Widget
 	if active {
-		search := w.input("Find by message, author, hash or ref", w.search, func(s string) { w.search = s; w.filterRows() }, nil)
-		w.searchField = search
-		historyBar := row(w.text("History").Bold(), primitives.Expanded(search), w.btn("Load more", button.TextOnly, w.data.More, func() { f := w.filter; f.Limit += 250; w.refresh(f) })).PaddingXY(10, 5).Background(cs.Surface)
+		var find widget.Widget = primitives.Box()
+		if w.searchOpen {
+			w.searchField = w.input("Find by message, author, hash or ref", w.search, func(s string) {
+				w.search = s
+				w.filterRows()
+			}, nil)
+			find = w.searchField
+		}
+		historyBar := row(w.text("History").Bold(), primitives.Expanded(find), w.btn("Load more", button.TextOnly, w.data.More, func() { f := w.filter; f.Limit += 250; w.refresh(f) })).PaddingXY(10, 5).Background(cs.Surface)
 		if w.table == nil {
 			w.table = w.historyTable()
 		}
@@ -133,8 +130,37 @@ func (w *workbench) render() {
 		}
 		state = fmt.Sprintf("%s%s     %d commits     %d changes     %d stashes", w.data.Branch, tracking, len(w.data.Commits), len(w.data.Files), len(w.data.Stashes))
 	}
-	footer := row(primitives.Expanded(w.muted(state).MaxLines(1).Ellipsis()), w.muted(w.path).MaxLines(1).Ellipsis()).PaddingXY(10, 4).Background(cs.Surface)
+	footer := row(primitives.Expanded(w.muted(state).MaxLines(1).Ellipsis()),
+		w.muted("").ContentSignal(hint).MaxLines(1).Ellipsis(), w.muted(w.path).MaxLines(1).Ellipsis()).PaddingXY(10, 4).Background(cs.Surface)
 	w.ui.SetRoot(primitives.VBox(row(header...).PaddingXY(8, 4).Background(cs.Surface), line(w), primitives.Expanded(body), line(w), footer).Background(cs.Background))
+	if w.focusSearch && w.searchField != nil {
+		w.focusSearch = false
+		w.ui.Window().Context().RequestFocus(w.searchField)
+	}
+}
+
+func (w *workbench) showSearch() {
+	if w.path == "" || w.busy {
+		return
+	}
+	if w.searchField != nil {
+		w.ui.Window().FocusManager().Focus(w.searchField)
+		w.ui.Window().Context().RequestFocus(w.searchField)
+		return
+	}
+	w.searchOpen, w.focusSearch = true, true
+	w.redraw()
+}
+
+func (w *workbench) toggleSearch() {
+	if !w.searchOpen {
+		w.showSearch()
+		return
+	}
+	w.searchOpen = false
+	w.search = ""
+	w.filterRows()
+	w.redraw()
 }
 
 func shortRef(ref string) string {

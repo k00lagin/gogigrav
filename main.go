@@ -72,6 +72,8 @@ type workbench struct {
 	ratio       float32
 	table       *datatable.Widget
 	searchField *textfield.Widget
+	searchOpen  bool
+	focusSearch bool
 	rows        []repo.Commit
 	search      string
 	selected    state.Signal[int]
@@ -108,11 +110,7 @@ func main() {
 	w.ui = app.New(app.WithWindowProvider(w.host), app.WithPlatformProvider(w.host), app.WithEventSource(w.host.EventSource()), app.WithTheme(w.theme.AsTheme()))
 	w.render()
 	shortcuts := w.ui.Window().FocusManager()
-	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyF, Ctrl: true}, func() {
-		if w.searchField != nil && !w.busy {
-			shortcuts.Focus(w.searchField)
-		}
-	})
+	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyF, Ctrl: true}, w.showSearch)
 	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyO, Ctrl: true}, func() { w.show("open") })
 	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyF5}, func() {
 		if w.path != "" && !w.busy {

@@ -224,20 +224,30 @@ func (w *workbench) stashForm() {
 	w.present("Stashes", []*formField{msg, list}, actions...)
 }
 func (w *workbench) syncBranch(push bool) {
-	label, sub := "Pull", "pull"
-	if push {
-		label, sub = "Push", "push"
-	}
 	if w.data.Upstream != "" {
 		if push {
-			w.command(label, "git", "push")
+			w.command("Push", "git", "push")
 		} else {
-			w.command(label, "git", "pull", "--ff-only")
+			w.command("Pull", "git", "pull", "--ff-only")
 		}
 		return
 	}
+	w.syncBranchForm(push)
+}
+
+func (w *workbench) syncBranchForm(push bool) {
+	label := "Pull"
+	if push {
+		label = "Push"
+	}
 	remote := choices("Remote", w.data.Remotes)
 	branch := &formField{label: "Remote branch", value: w.data.Branch}
+	for _, name := range w.data.Remotes {
+		if ref, ok := strings.CutPrefix(w.data.Upstream, name+"/"); ok {
+			remote.value, branch.value = name, ref
+			break
+		}
+	}
 	w.present(label, []*formField{remote, branch}, formAction{label, func() error {
 		if remote.value == "" {
 			return errors.New("select a remote")
@@ -246,18 +256,24 @@ func (w *workbench) syncBranch(push bool) {
 			return err
 		}
 		if push {
-			w.command(label, "git", sub, "--set-upstream", "--", remote.value, "HEAD:refs/heads/"+branch.value)
+			args := []string{"push"}
+			if w.data.Upstream == "" {
+				args = append(args, "--set-upstream")
+			}
+			w.command(label, "git", append(args, "--", remote.value, "HEAD:refs/heads/"+branch.value)...)
 		} else {
-			w.command(label, "git", sub, "--ff-only", "--", remote.value, branch.value)
+			w.command(label, "git", "pull", "--ff-only", "--", remote.value, branch.value)
 		}
 		return nil
 	}})
 }
-func (w *workbench) remotesForm() {
-	name := &formField{label: "New remote name", value: "origin"}
+func (w *workbench) addRemoteForm() {
+	name := &formField{label: "Remote name"}
+	if len(w.data.Remotes) == 0 {
+		name.value = "origin"
+	}
 	url := &formField{label: "Remote URL"}
-	remote := choices("Existing remote", w.data.Remotes)
-	actions := []formAction{{"Add remote", func() error {
+	w.present("Add remote", []*formField{name, url}, formAction{"Add remote", func() error {
 		if err := validName(name.value); err != nil {
 			return err
 		}
@@ -266,24 +282,23 @@ func (w *workbench) remotesForm() {
 		}
 		w.command("Add remote", "git", "remote", "add", "--", name.value, url.value)
 		return nil
-	}}}
-	if len(remote.choices) > 0 {
-		actions = append(actions, formAction{"Show selected URL", func() error {
-			path, r := w.path, remote.value
-			w.job("Read remote URL", func(ctx context.Context) (func(), error) {
-				out, err := repo.Run(ctx, path, "git", "remote", "get-url", "--", r)
-				return func() { url.value = strings.TrimSpace(out) }, err
-			})
-			return nil
-		}}, formAction{"Update selected URL", func() error {
-			if strings.TrimSpace(url.value) == "" {
-				return errors.New("enter a remote URL")
-			}
-			w.command("Update remote", "git", "remote", "set-url", "--", remote.value, url.value)
-			return nil
-		}})
-	} else {
-		actions = append(actions, formAction{"Publish to GitHub…", func() error { w.publishForm(); return nil }})
-	}
-	w.present("Remotes", []*formField{remote, name, url}, actions...)
+	}})
+}
+
+func (w *workbench) editRemoteForm(name string) {
+	path := w.path
+	w.job("Read remote URL", func(ctx context.Context) (func(), error) {
+		value, err := repo.Run(ctx, path, "git", "remote", "get-url", "--", name)
+		return func() {
+			url := &formField{label: "Remote URL", value: strings.TrimSpace(value)}
+			w.present("Edit "+name, []*formField{url}, formAction{"Save URL", func() error {
+				value := strings.TrimSpace(url.value)
+				if value == "" {
+					return errors.New("enter a remote URL")
+				}
+				w.command("Update remote", "git", "remote", "set-url", "--", name, value)
+				return nil
+			}})
+		}, err
+	})
 }
