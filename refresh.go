@@ -55,6 +55,7 @@ func (w *workbench) checkAutoRefresh() {
 			w.data, w.filter = snapshot, filter
 			w.file = nil
 			w.filterRows()
+			w.refreshPreview()
 			w.redraw()
 		}, nil
 	}, func(apply func(), err error) {

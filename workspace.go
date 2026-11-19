@@ -78,7 +78,9 @@ func (w *workbench) render() {
 	w.inlineContent = nil
 	w.inlineGraph = nil
 	var body widget.Widget
-	if active {
+	if w.viewer != nil && active {
+		body = w.previewPanel()
+	} else if active {
 		var find widget.Widget = primitives.Box()
 		if w.searchOpen {
 			w.searchField = w.input("Find by message, author, hash or ref", w.search, func(s string) {
@@ -112,7 +114,7 @@ func (w *workbench) render() {
 		body = primitives.VBox(w.panel()).Padding(26).Background(cs.Background)
 	}
 	w.ui.SetRoot(primitives.VBox(w.titleBar, primitives.Expanded(body), line(w), w.statusBar(hint)).Background(cs.Background))
-	if (w.focusHistory || historyFocused) && active {
+	if (w.focusHistory || historyFocused) && active && w.viewer == nil {
 		w.focusHistory = false
 		w.ui.Window().Context().RequestFocus(w.table)
 	}

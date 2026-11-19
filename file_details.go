@@ -65,6 +65,7 @@ func compactFileFolders(parent *treeview.TreeNode) {
 		for len(folder.Children) == 1 && !folder.Children[0].IsLeaf() {
 			child := folder.Children[0]
 			folder.Label += " / " + child.Label
+			folder.ID = child.ID
 			folder.Children = child.Children
 		}
 		if !folder.IsLeaf() {
@@ -104,12 +105,26 @@ func (w *workbench) fileSection(title, empty string, files []repo.File, stage bo
 		treeview.ShowLines(true), treeview.PainterOpt(painter), treeview.ScrollbarPainterOpt(w.paint.Scrollbar),
 		treeview.OnSelect(func(n *treeview.TreeNode) {
 			w.file, _ = n.Data.(*fileItem)
+			if v := w.viewer; v != nil && w.file != nil {
+				for i, f := range files {
+					if f.Path == w.file.file.Path && i != v.index {
+						w.openPreview(files, i, stage, v.compare, v.mode)
+						break
+					}
+				}
+			}
 			w.ui.Window().Context().Invalidate()
 		}))
-	if maxRows > 0 {
-		return primitives.VBox(header, line(w), primitives.VBox(tree).MaxHeightValue(float32(maxRows)*fileRowHeight))
+	wrap := func(box *primitives.BoxWidget) widget.Widget {
+		return &fileTreeActions{BoxWidget: box, tree: tree, root: root,
+			activate: func(n *treeview.TreeNode, menu bool, at geometry.Point) {
+				w.fileTreeAction(title, n, files, stage, menu, at)
+			}}
 	}
-	return primitives.VBox(header, line(w), primitives.Expanded(tree))
+	if maxRows > 0 {
+		return wrap(primitives.VBox(header, line(w), primitives.VBox(tree).MaxHeightValue(float32(maxRows)*fileRowHeight)))
+	}
+	return wrap(primitives.VBox(header, line(w), primitives.Expanded(tree)))
 }
 
 type fileSectionHeader struct {

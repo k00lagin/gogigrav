@@ -104,9 +104,12 @@ type workbench struct {
 	commit       repo.Commit
 	changed      []repo.File
 	file         *fileItem
+	viewer       *filePreview
 	drafts       map[string]string
 	form         *actionForm
 	amend        bool
+
+	previewWrap, previewSplit, previewSidebar bool
 
 	inlineClosed  bool
 	inlineContent widget.Widget
@@ -231,6 +234,7 @@ func (w *workbench) show(page string) {
 		return
 	}
 	w.page = page
+	w.closePreview()
 	w.form = nil
 	w.inlineClosed = false
 	w.redraw()
@@ -308,6 +312,7 @@ func (w *workbench) open(path string) {
 		data, err := repo.Load(ctx, path, f)
 		return func() {
 			w.path, w.filter, w.data = path, f, data
+			w.closePreview()
 			w.search = ""
 			w.table = nil
 			w.page = "changes"
@@ -327,7 +332,12 @@ func (w *workbench) refresh(f repo.Filter) {
 	path := w.path
 	w.job("Refresh history", func(ctx context.Context) (func(), error) {
 		data, err := repo.Load(ctx, path, f)
-		return func() { w.data, w.filter = data, f; w.file = nil; w.filterRows() }, err
+		return func() {
+			w.data, w.filter = data, f
+			w.file = nil
+			w.filterRows()
+			w.refreshPreview()
+		}, err
 	})
 }
 
