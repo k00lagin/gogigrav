@@ -72,8 +72,11 @@ func (w *workbench) render() {
 	cs := w.theme.Colors
 	hint := state.NewSignal("")
 	active := w.path != ""
+	historyFocused := w.table != nil && w.ui.Window().Context().FocusedWidget() == w.table
 	w.titleBar = w.newTitleBar(row(w.repositoryToolbar(hint)).PaddingLeft(4), w.actionToolbar(hint))
 	w.searchField = nil
+	w.inlineContent = nil
+	w.inlineGraph = nil
 	var body widget.Widget
 	if active {
 		var find widget.Widget = primitives.Box()
@@ -93,29 +96,30 @@ func (w *workbench) render() {
 			w.table = w.historyTable()
 		}
 		history := primitives.VBox(historyBar, line(w), primitives.Expanded(w.table)).Background(cs.Background)
-		body = splitview.New(splitview.First(history), splitview.Second(w.panel()), splitview.InitialRatio(w.ratio), splitview.OnRatioChange(func(r float32) { w.ratio = r }), splitview.MinFirst(380), splitview.MinSecond(320), splitview.DividerWidth(3), splitview.PainterOpt(w.paint.SplitView))
+		detailRow := w.syncInlineDetails()
+		if w.revealInline && detailRow >= 0 {
+			w.table.ScrollToRow(detailRow)
+		}
+		w.revealInline = false
+		if w.usesInlineHistory() {
+			body = history
+		} else {
+			body = splitview.New(splitview.First(history), splitview.Second(w.panel()),
+				splitview.InitialRatio(w.ratio), splitview.OnRatioChange(func(r float32) { w.ratio = r }),
+				splitview.MinFirst(380), splitview.MinSecond(320), splitview.DividerWidth(3), splitview.PainterOpt(w.paint.SplitView))
+		}
 	} else {
 		body = primitives.VBox(w.panel()).Padding(26).Background(cs.Background)
 	}
-	w.statusText = state.NewSignal(w.historyStatus())
-	footer := row(primitives.Expanded(w.muted("").ContentSignal(w.statusText).MaxLines(1).Ellipsis()),
-		w.muted("").ContentSignal(hint).MaxLines(1).Ellipsis(), w.muted(w.path).MaxLines(1).Ellipsis()).PaddingXY(10, 4).Background(cs.Surface)
-	w.ui.SetRoot(primitives.VBox(w.titleBar, primitives.Expanded(body), line(w), footer).Background(cs.Background))
+	w.ui.SetRoot(primitives.VBox(w.titleBar, primitives.Expanded(body), line(w), w.statusBar(hint)).Background(cs.Background))
+	if (w.focusHistory || historyFocused) && active {
+		w.focusHistory = false
+		w.ui.Window().Context().RequestFocus(w.table)
+	}
 	if w.focusSearch && w.searchField != nil {
 		w.focusSearch = false
 		w.ui.Window().Context().RequestFocus(w.searchField)
 	}
-}
-
-func (w *workbench) historyStatus() string {
-	if w.path == "" || w.status != "" {
-		return w.status
-	}
-	tracking := ""
-	if w.data.Upstream != "" {
-		tracking = fmt.Sprintf("   %s ↑%d ↓%d", w.data.Upstream, w.data.Ahead, w.data.Behind)
-	}
-	return fmt.Sprintf("%s%s     %d commits     %d changes     %d stashes", w.data.Branch, tracking, len(w.data.Commits), len(w.data.Files), len(w.data.Stashes))
 }
 
 func (w *workbench) showSearch() {
@@ -143,81 +147,139 @@ func (w *workbench) toggleSearch() {
 }
 
 func shortRef(ref string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(ref, "refs/heads/"), "refs/remotes/")
+	return strings.TrimPrefix(strings.TrimPrefix(ref, repo.LocalRefPrefix), repo.RemoteRefPrefix)
 }
-func displayDate(s string) string {
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t.Local().Format("2006-01-02 15:04")
+func (w *workbench) commitDate(c repo.Commit) string {
+	raw := c.Date
+	if w.prefs.Settings.CommitDate && c.CommitDate != "" {
+		raw = c.CommitDate
 	}
-	return s
+	date, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return raw
+	}
+	switch w.prefs.Settings.DateFormat {
+	case "date":
+		return date.Local().Format("2006-01-02")
+	case "relative":
+		return relativeDate(date, time.Now())
+	default:
+		return date.Local().Format("2006-01-02 15:04")
+	}
 }
+
+func relativeDate(date, now time.Time) string {
+	age := now.Sub(date)
+	future := age < 0
+	for _, unit := range []struct {
+		duration time.Duration
+		name     string
+	}{{365 * 24 * time.Hour, "year"}, {30 * 24 * time.Hour, "month"}, {24 * time.Hour, "day"}, {time.Hour, "hour"}, {time.Minute, "minute"}} {
+		if count := int(age.Abs() / unit.duration); count > 0 {
+			name := unit.name
+			if count != 1 {
+				name += "s"
+			}
+			if future {
+				return fmt.Sprintf("in %d %s", count, name)
+			}
+			return fmt.Sprintf("%d %s ago", count, name)
+		}
+	}
+	return "just now"
+}
+
+func (w *workbench) uncommittedRowCount() int {
+	if w.prefs.Settings.HideUncommitted {
+		return 0
+	}
+	return 1
+}
+
+func (w *workbench) showCommitter(c repo.Commit) bool {
+	return w.prefs.Settings.ShowCommitter && c.Committer != "" &&
+		(c.Committer != c.Author || c.CommitterEmail != c.Email)
+}
+
+func (w *workbench) commitAuthor(c repo.Commit) string {
+	if w.showCommitter(c) {
+		return c.Author + " / " + c.Committer
+	}
+	return c.Author
+}
+
 func (w *workbench) historyTable() *datatable.Widget {
-	cols := []datatable.Column{{Key: "description", Title: "Description", MinWidth: 120}, {Key: "date", Title: "Date", Width: 126}, {Key: "author", Title: "Author", Width: 106}, {Key: "hash", Title: "Commit", Width: 82}}
-	return datatable.New(datatable.Columns(cols), datatable.RowCountFn(func() int { return len(w.rows) + 1 }), datatable.RowHeight(27), datatable.PainterOpt(historyPainter{w.paint.DataTable, w}), datatable.SelectedRowSignal(w.selected), datatable.SelectionModeOpt(datatable.SelectionSingle), datatable.A11yLabel("Commit history"), datatable.CellValue(func(i int, k string) string {
-		if i == 0 {
+	authorWidth := float32(106)
+	if w.prefs.Settings.ShowCommitter {
+		authorWidth = 190
+	}
+	cols := []datatable.Column{{Key: "description", Title: historyDescription, MinWidth: 120}, {Key: "date", Title: "Date", Width: 126}, {Key: "author", Title: "Author", Width: authorWidth}, {Key: "hash", Title: "Commit", Width: 82}}
+	return datatable.New(datatable.Columns(cols), datatable.RowCountFn(func() int { return len(w.rows) + w.uncommittedRowCount() }), datatable.RowHeight(27), datatable.PainterOpt(historyPainter{w.paint.DataTable, w}), datatable.SelectedRowSignal(w.selected), datatable.SelectionModeOpt(datatable.SelectionSingle), datatable.A11yLabel("Commit history"), datatable.CellValue(func(i int, k string) string {
+		i -= w.uncommittedRowCount()
+		if i == -1 {
 			if k == "description" {
 				return fmt.Sprintf("Uncommitted Changes (%d)", len(w.data.Files))
 			}
 			return ""
 		}
-		if i < 1 || i > len(w.rows) {
+		if i < 0 || i >= len(w.rows) {
 			return ""
 		}
-		c := w.rows[i-1]
+		c := w.rows[i]
 		switch k {
 		case "date":
-			return displayDate(c.Date)
+			return w.commitDate(c)
 		case "author":
-			return c.Author
+			return w.commitAuthor(c)
 		case "hash":
 			return c.Short()
 		case "description":
 			return c.Subject
 		}
 		return ""
-	}), datatable.OnRowSelect(func(i int) {
-		if w.busy {
-			return
+	}), datatable.DisabledFn(func() bool { return w.busy }), datatable.OnRowSelect(w.selectHistoryRow), datatable.OnRowReselect(func(i int) {
+		if w.prefs.Settings.UnifiedDetails {
+			w.selectHistoryRow(i)
 		}
-		w.form = nil
-		w.file = nil
-		if i == 0 {
-			w.commit = repo.Commit{}
-			w.show("changes")
-			return
-		}
-		if i < 1 || i > len(w.rows) {
-			return
-		}
-		c, path := w.rows[i-1], w.path
-		w.commit = c
-		w.page = "commit"
-		w.changed = nil
-		w.job("Read changed paths", func(ctx context.Context) (func(), error) {
-			files, err := repo.ChangedPaths(ctx, path, c)
-			return func() { w.changed = files }, err
-		})
 	}))
+}
+
+func (w *workbench) selectHistoryRow(row int) {
+	if w.busy {
+		return
+	}
+	if row == w.inlineHistoryRow() {
+		w.closeInlineDetails()
+		return
+	}
+	i := row - w.uncommittedRowCount()
+	if i < -1 || i >= len(w.rows) {
+		return
+	}
+	w.form = nil
+	w.file = nil
+	w.inlineClosed = false
+	w.focusHistory = w.prefs.Settings.UnifiedDetails
+	w.revealInline = w.focusHistory
+	if i == -1 {
+		w.commit = repo.Commit{}
+		w.show("changes")
+		return
+	}
+	c, path := w.rows[i], w.path
+	w.commit = c
+	w.page = "commit"
+	w.changed = nil
+	w.job("Read changed paths", func(ctx context.Context) (func(), error) {
+		files, err := repo.ChangedPaths(ctx, path, c)
+		return func() { w.changed = files }, err
+	})
 }
 func (w *workbench) panel() widget.Widget {
 	cs := w.theme.Colors
 	var title string
 	var content widget.Widget
 	switch w.page {
-	case "settings":
-		title = "Settings"
-		idx := 1
-		if w.prefs.Light {
-			idx = 0
-		}
-		content = primitives.VBox(w.muted("Color theme"), w.pick("Theme", []string{"DevTools", "DevTools Dark"}, idx, func(i int) {
-			w.prefs.Light = i == 0
-			w.prefs.save()
-			w.setTheme()
-			w.ui.SetTheme(w.theme.AsTheme())
-			w.table = nil
-			w.redraw()
-		}), w.btn("Check GitHub sign-in", button.Outlined, true, w.checkGitHub)).Gap(8).Padding(12)
 	case "open":
 		title = "Open repository"
 		content = w.openPanel()
@@ -226,14 +288,14 @@ func (w *workbench) panel() widget.Widget {
 		content = w.formPanel()
 	case "commit":
 		title = "Commit details"
-		content = w.commitPanel()
+		content = w.commitPanel(false)
 	default:
 		title = "Uncommitted Changes"
-		content = w.changesPanel()
+		content = w.changesPanel(false)
 	}
 	head := []widget.Widget{primitives.Expanded(w.text(title).Bold())}
 	if w.path != "" && w.page != "changes" {
-		head = append(head, w.btn("Changes", button.TextOnly, true, func() { w.commit = repo.Commit{}; w.selected.Set(0); w.show("changes") }))
+		head = append(head, w.btn("Changes", button.TextOnly, true, func() { w.commit = repo.Commit{}; w.selected.Set(w.uncommittedRowCount() - 1); w.show("changes") }))
 	}
 	if w.path == "" && w.page != "open" {
 		head = append(head, w.btn("Open repository", button.TextOnly, true, func() { w.show("open") }))
@@ -248,7 +310,8 @@ type fileItem struct {
 
 func (w *workbench) fileTree(groups ...*treeview.TreeNode) widget.Widget {
 	root := &treeview.TreeNode{ID: "root", Label: "Files", Expanded: true, Children: groups}
-	return treeview.New(treeview.Root(root), treeview.SelectionModeOpt(treeview.SelectionSingle), treeview.ItemHeight(23), treeview.IndentWidth(12), treeview.ShowLines(true), treeview.PainterOpt(w.paint.TreeView), treeview.OnSelect(func(n *treeview.TreeNode) {
+	painter := fileTreePainter{w.paint.TreeView, w.theme.IsDark()}
+	return treeview.New(treeview.Root(root), treeview.SelectionModeOpt(treeview.SelectionSingle), treeview.ItemHeight(23), treeview.IndentWidth(12), treeview.ShowLines(true), treeview.PainterOpt(painter), treeview.ScrollbarPainterOpt(w.paint.Scrollbar), treeview.OnSelect(func(n *treeview.TreeNode) {
 		item, _ := n.Data.(*fileItem)
 		w.file = item
 		w.ui.Window().Context().Invalidate()
@@ -289,9 +352,13 @@ func fileGroup(name string, files []repo.File, stage bool, filter func(repo.File
 	return root
 }
 
-func (w *workbench) commitPanel() widget.Widget {
+func (w *workbench) commitPanel(inline bool) widget.Widget {
 	c := w.commit
-	meta := []widget.Widget{w.text(c.Subject).Bold().MaxLines(3), w.muted(c.Author + "  <" + c.Email + ">"), w.muted(displayDate(c.Date)), w.muted(c.Hash).FontSize(11)}
+	meta := []widget.Widget{w.text(c.Subject).Bold().MaxLines(3), w.muted(c.Author + "  <" + c.Email + ">")}
+	if w.showCommitter(c) {
+		meta = append(meta, w.muted("Committer  "+c.Committer+"  <"+c.CommitterEmail+">"))
+	}
+	meta = append(meta, w.muted(w.commitDate(c)), w.muted(c.Hash).FontSize(11))
 	if c.Body != "" {
 		body := scrollview.New(w.text(c.Body), scrollview.PainterOpt(w.paint.Scrollbar))
 		meta = append(meta, primitives.VBox(body).Height(82))
@@ -307,10 +374,15 @@ func (w *workbench) commitPanel() widget.Widget {
 		meta = append(meta, w.muted("Parents   "+strings.Join(parents, "  ")))
 	}
 	meta = append(meta, row(w.btn("Create branch", button.Outlined, true, func() { w.branchAt(c.Hash) }), w.btn("Create tag", button.Outlined, true, func() { w.tagAt(c.Hash) })))
-	return primitives.VBox(primitives.VBox(meta...).Padding(12).Gap(5), line(w), primitives.Expanded(w.fileTree(fileGroup("Changed files", w.changed, false, nil))))
+	metadata := primitives.VBox(meta...).Padding(12).Gap(5)
+	files := w.fileTree(fileGroup("Changed files", w.changed, false, nil))
+	if inline {
+		return w.inlineColumns(scrollview.New(metadata, scrollview.PainterOpt(w.paint.Scrollbar)), files)
+	}
+	return primitives.VBox(metadata, line(w), primitives.Expanded(files))
 }
 
-func (w *workbench) changesPanel() widget.Widget {
+func (w *workbench) changesPanel(inline bool) widget.Widget {
 	d := w.data
 	staged := slices.ContainsFunc(d.Files, repo.File.Staged)
 	msg := w.input("Commit message", w.drafts[w.path], func(s string) { w.drafts[w.path] = s }, nil)
@@ -354,5 +426,9 @@ func (w *workbench) changesPanel() widget.Widget {
 		}))
 	}
 	actions := row(selectAction(true), selectAction(false), w.btn("Stage all", button.TextOnly, slices.ContainsFunc(d.Files, repo.File.Unstaged), func() { w.command("Stage all", "git", "add", "-A", "--", ".") })).PaddingXY(10, 6)
-	return primitives.VBox(controls, line(w), actions, primitives.Expanded(w.fileTree(fileGroup("Staged changes", d.Files, false, repo.File.Staged), fileGroup("Changes", d.Files, true, repo.File.Unstaged))))
+	files := w.fileTree(fileGroup("Staged changes", d.Files, false, repo.File.Staged), fileGroup("Changes", d.Files, true, repo.File.Unstaged))
+	if inline {
+		return w.inlineColumns(controls, primitives.VBox(actions, line(w), primitives.Expanded(files)))
+	}
+	return primitives.VBox(controls, line(w), actions, primitives.Expanded(files))
 }

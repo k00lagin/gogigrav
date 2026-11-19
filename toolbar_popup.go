@@ -58,39 +58,49 @@ func (w *workbench) branchFilterLabel() string {
 // openToolbarPopup accepts any widget tree as its content. The optional focus
 // target lets a menu put the caret in a search field as soon as it opens.
 func (w *workbench) openToolbarPopup(bar *toolbarHints, index int, placement popover.Placement, content, focus widget.Widget) {
+	anchor := func() geometry.Rect {
+		bounds := bar.ItemBounds(index).Translate(bar.ScreenOrigin())
+		panel := bar.ScreenBounds()
+		bounds.Min.Y, bounds.Max.Y = panel.Min.Y, panel.Max.Y
+		return bounds
+	}
+	w.openAnchoredPopup(bar, bar.ItemAt(index).Icon.Name, anchor, placement, content, focus)
+}
+
+type popupAnchor interface {
+	widget.Widget
+	ScreenBounds() geometry.Rect
+	SetNeedsRedraw(bool)
+}
+
+func (w *workbench) openAnchoredPopup(trigger popupAnchor, id string, anchor func() geometry.Rect, placement popover.Placement, content, focus widget.Widget) {
 	ctx := w.ui.Window().Context()
-	glyph := bar.ItemAt(index).Icon.Name
-	alreadyOpen := w.popupIcon == glyph
+	alreadyOpen := w.popupIcon == id
 	w.closeToolbarPopup()
 	if alreadyOpen || w.busy {
 		return
 	}
 
 	popup := popover.NewPopover(
-		popover.AnchorBounds(func() geometry.Rect {
-			bounds := bar.ItemBounds(index).Translate(bar.ScreenOrigin())
-			panel := bar.ScreenBounds()
-			bounds.Min.Y, bounds.Max.Y = panel.Min.Y, panel.Max.Y
-			return bounds
-		}),
+		popover.AnchorBounds(anchor),
 		popover.Content(content),
 		popover.PlacementOpt(placement),
 		popover.PainterOpt(w.paint.Popover),
 		popover.OnHide(func() {
 			w.openPopup, w.popupIcon = nil, ""
-			ctx.RequestFocus(bar)
-			bar.SetNeedsRedraw(true)
-			ctx.InvalidateRect(bar.ScreenBounds())
+			ctx.RequestFocus(trigger)
+			trigger.SetNeedsRedraw(true)
+			ctx.InvalidateRect(trigger.ScreenBounds())
 		}),
 	)
 	popup.Show(ctx)
 	if popup.IsOpen() {
-		w.openPopup, w.popupIcon = popup, glyph
+		w.openPopup, w.popupIcon = popup, id
 		if focus != nil {
 			ctx.RequestFocus(focus)
 		}
-		bar.SetNeedsRedraw(true)
-		ctx.InvalidateRect(bar.ScreenBounds())
+		trigger.SetNeedsRedraw(true)
+		ctx.InvalidateRect(trigger.ScreenBounds())
 	}
 }
 
@@ -116,6 +126,7 @@ func (w *workbench) selectPopupAction(action func()) {
 type popupChoice struct {
 	label   string
 	detail  string
+	glyph   icon.IconData
 	current bool
 	action  func()
 }
@@ -188,7 +199,16 @@ func (w *workbench) choicePanel(width, rowHeight float32, placeholder string, ch
 			if choice.detail != "" {
 				content = append(content, w.muted(choice.detail).FontSize(11).MaxLines(1).Ellipsis())
 			}
-			return primitives.VBox(content...).PaddingXY(8, 4)
+			text := primitives.VBox(content...)
+			if choice.glyph.Name != "" {
+				color := w.theme.Colors.OnSurfaceSecondary
+				if choice.action == nil {
+					color = w.theme.Colors.OnSurfaceDisabled
+				}
+				return row(icon.NewIcon(choice.glyph, icon.Size(14), icon.Color(color)),
+					primitives.Expanded(text)).PaddingXY(6, 3)
+			}
+			return text.PaddingXY(8, 4)
 		}),
 	)
 	panel := primitives.VBox().Width(width).Padding(8).Gap(6)

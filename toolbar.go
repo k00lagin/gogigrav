@@ -4,6 +4,7 @@ import (
 	"embed"
 	"fmt"
 
+	"github.com/gogpu/ui/core/popover"
 	"github.com/gogpu/ui/core/toolbar"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
@@ -50,26 +51,29 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 	if w.path != "" {
 		hasRemote := len(w.data.Remotes) > 0
 		hasHead := w.data.Head != ""
+		hasBranch := hasHead && w.data.CurrentBranch() != ""
+		stashIndex := len(items) + 2
 		items = append(items,
 			action("Find in history (Ctrl+F)", icon.ExpSearch, true, w.toggleSearch),
 			action("Branches", branchIcon, hasHead, w.branchForm),
-			action("Stashes", stashIcon, true, w.stashForm),
-			action("Fetch all remotes", fetchIcon, hasRemote, func() {
-				w.command("Fetch", "git", "fetch", "--all", "--prune")
+			action("Stashes", stashIcon, true, func() {
+				content, focus := w.stashesPanel()
+				w.openToolbarPopup(bar, stashIndex, popover.BottomStart, content, focus)
 			}),
+			action("Fetch all remotes", fetchIcon, hasRemote, w.fetch),
 			action(syncLabel("Pull", w.data.Behind), pullIcon, hasRemote, func() { w.syncBranch(false) }),
 			options("Pull options", hasRemote, func() { w.syncBranchForm(false) }),
 		)
 		if hasRemote {
 			items = append(items,
-				action(syncLabel("Push", w.data.Ahead), pushIcon, hasHead, func() { w.syncBranch(true) }),
-				options("Push options", hasHead, func() { w.syncBranchForm(true) }),
+				action(syncLabel("Push", w.data.Ahead), pushIcon, hasBranch, func() { w.syncBranch(true) }),
+				options("Push options", hasBranch, func() { w.syncBranchForm(true) }),
 			)
 		} else {
-			items = append(items, action("Publish to GitHub", pushIcon, hasHead, w.publishForm))
+			items = append(items, action("Publish to GitHub", pushIcon, hasBranch, w.publishForm))
 		}
 		index := len(items)
-		remotes := w.selector("Remotes", remotesIcon, 100, func() {
+		remotes := w.selector("Remotes", remotesIcon, 118, func() {
 			w.remotesPopup(bar, index)
 		})
 		items = append(items, remotes,
@@ -77,7 +81,7 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 		)
 	}
 	items = append(items,
-		action("Settings", icon.ExpSettings, true, func() { w.show("settings") }),
+		action("Settings", icon.ExpSettings, true, w.showSettings),
 		toolbar.Custom(primitives.Box().Width(4).Height(1)),
 	)
 	bar = w.headerToolbar(hint, items)

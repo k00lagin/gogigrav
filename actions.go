@@ -19,15 +19,17 @@ import (
 type formField struct {
 	label, value string
 	choices      []string
+	checkbox     bool
+	checked      bool
 }
 type formAction struct {
 	label string
 	run   func() error
 }
 type actionForm struct {
-	title   string
-	fields  []*formField
-	actions []formAction
+	title, description string
+	fields             []*formField
+	actions            []formAction
 }
 
 func choices(label string, values []string) *formField {
@@ -37,17 +39,28 @@ func choices(label string, values []string) *formField {
 	}
 	return f
 }
+func flagField(label string, checked bool) *formField {
+	return &formField{label: label, checkbox: true, checked: checked}
+}
+
 func (w *workbench) present(title string, fields []*formField, actions ...formAction) {
 	if w.busy {
 		return
 	}
-	w.form = &actionForm{title, fields, actions}
+	w.form = &actionForm{title: title, fields: fields, actions: actions}
 	w.page = "form"
 	w.redraw()
 }
 func (w *workbench) formPanel() widget.Widget {
 	var children []widget.Widget
+	if w.form.description != "" {
+		children = append(children, w.muted(w.form.description))
+	}
 	for _, f := range w.form.fields {
+		if f.checkbox {
+			children = append(children, w.check(f.label, f.checked, true, func(value bool) { f.checked = value }))
+			continue
+		}
 		children = append(children, w.muted(f.label))
 		if f.choices != nil {
 			children = append(children, w.pick(f.label, f.choices, slices.Index(f.choices, f.value), func(i int) { f.value = f.choices[i] }))
@@ -166,7 +179,7 @@ func (w *workbench) branchAt(ref string) {
 func (w *workbench) branchForm() {
 	name := &formField{label: "New branch from HEAD"}
 	existing := choices("Existing branch", w.data.Branches)
-	current := "refs/heads/" + w.data.Branch
+	current := repo.LocalRefPrefix + w.data.CurrentBranch()
 	if slices.Contains(existing.choices, current) {
 		existing.value = current
 	}
@@ -180,13 +193,16 @@ func (w *workbench) branchForm() {
 		if existing.value == "" {
 			return errors.New("select a branch")
 		}
-		if strings.HasPrefix(existing.value, "refs/remotes/") {
-			w.command("Track remote branch", "git", "switch", "--track", existing.value)
-		} else {
-			w.command("Switch branch", "git", "switch", "--", shortRef(existing.value))
-		}
+		w.switchBranch(existing.value)
 		return nil
 	}})
+}
+func (w *workbench) switchBranch(ref string) {
+	if strings.HasPrefix(ref, repo.RemoteRefPrefix) {
+		w.command("Track remote branch", "git", "switch", "--track", "--", ref)
+	} else if branch, ok := strings.CutPrefix(ref, repo.LocalRefPrefix); ok && branch != w.data.CurrentBranch() {
+		w.command("Switch to "+branch, "git", "switch", "--", branch)
+	}
 }
 func (w *workbench) tagAt(ref string) {
 	name := &formField{label: "Tag name"}
@@ -198,72 +214,88 @@ func (w *workbench) tagAt(ref string) {
 		return nil
 	}})
 }
-func (w *workbench) stashForm() {
-	msg := &formField{label: "Stash message (optional)"}
-	list := choices("Saved stashes", w.data.Stashes)
-	actions := []formAction{{"Stash working changes", func() error {
-		if len(w.data.Files) == 0 {
-			return errors.New("there are no changes to stash")
-		}
-		args := []string{"stash", "push", "--include-untracked"}
-		if msg.value != "" {
-			args = append(args, "-m", msg.value)
-		}
-		w.command("Stash changes", "git", args...)
-		return nil
-	}}}
-	if len(list.choices) > 0 {
-		for _, op := range []string{"apply", "pop"} {
-			actions = append(actions, formAction{strings.ToUpper(op[:1]) + op[1:] + " selected stash", func() error {
-				ref, _, _ := strings.Cut(list.value, " ")
-				w.command("Restore stash", "git", "stash", op, ref)
-				return nil
-			}})
-		}
-	}
-	w.present("Stashes", []*formField{msg, list}, actions...)
-}
 func (w *workbench) syncBranch(push bool) {
-	if w.data.Upstream != "" {
-		if push {
-			w.command("Push", "git", "push")
-		} else {
-			w.command("Pull", "git", "pull", "--ff-only")
-		}
+	if w.busy || len(w.data.Remotes) == 0 {
 		return
+	}
+	branch := w.data.CurrentBranch()
+	if !push && branch != "" && w.data.Upstream != "" {
+		w.pullBranch("Pull from "+w.data.Upstream, "", "", false)
+		return
+	}
+	if push {
+		if branch == "" || w.data.Head == "" {
+			return
+		}
+		if remote, target := w.upstreamTarget(); remote != "" {
+			w.pushBranch(remote, branch, target, false, false)
+			return
+		}
 	}
 	w.syncBranchForm(push)
 }
 
+func (w *workbench) upstreamTarget() (string, string) {
+	target, ok := strings.CutPrefix(w.data.UpstreamRef, repo.LocalRefPrefix)
+	if ok && slices.Contains(w.data.Remotes, w.data.UpstreamRemote) {
+		return w.data.UpstreamRemote, target
+	}
+	return "", ""
+}
+
+func (w *workbench) pushBranch(remote, source, target string, setUpstream, forceWithLease bool) {
+	path := w.path
+	w.changeRepository("Push "+source+" to "+remote+"/"+target, func(ctx context.Context) error {
+		return repo.Push(ctx, path, remote, source, target, setUpstream, forceWithLease)
+	})
+}
+
+func (w *workbench) pullBranch(label, remote, target string, rebase bool) {
+	path := w.path
+	w.changeRepository(label, func(ctx context.Context) error {
+		return repo.Pull(ctx, path, remote, target, rebase)
+	})
+}
+
 func (w *workbench) syncBranchForm(push bool) {
-	label := "Pull"
-	if push {
-		label = "Push"
-	}
+	current := w.data.CurrentBranch()
 	remote := choices("Remote", w.data.Remotes)
-	branch := &formField{label: "Remote branch", value: w.data.Branch}
-	for _, name := range w.data.Remotes {
-		if ref, ok := strings.CutPrefix(w.data.Upstream, name+"/"); ok {
-			remote.value, branch.value = name, ref
-			break
-		}
+	branch := &formField{label: "Remote branch", value: current}
+	upstream, target := w.upstreamTarget()
+	if upstream != "" {
+		remote.value, branch.value = upstream, target
+	} else if slices.Contains(remote.choices, "origin") {
+		remote.value = "origin"
 	}
-	w.present(label, []*formField{remote, branch}, formAction{label, func() error {
+	validate := func(target string) error {
 		if remote.value == "" {
 			return errors.New("select a remote")
 		}
-		if err := validName(branch.value); err != nil {
+		return validName(target)
+	}
+	if push {
+		if current == "" || w.data.Head == "" {
+			return
+		}
+		track := flagField("Set upstream", upstream == "")
+		force := flagField("Force push with lease", false)
+		w.present("Push "+current, []*formField{remote, branch, track, force}, formAction{"Push", func() error {
+			target := strings.TrimSpace(branch.value)
+			if err := validate(target); err != nil {
+				return err
+			}
+			w.pushBranch(remote.value, current, target, track.checked, force.checked)
+			return nil
+		}})
+		return
+	}
+	rebase := flagField("Rebase instead of merge", false)
+	w.present("Pull", []*formField{remote, branch, rebase}, formAction{"Pull", func() error {
+		target := strings.TrimSpace(branch.value)
+		if err := validate(target); err != nil {
 			return err
 		}
-		if push {
-			args := []string{"push"}
-			if w.data.Upstream == "" {
-				args = append(args, "--set-upstream")
-			}
-			w.command(label, "git", append(args, "--", remote.value, "HEAD:refs/heads/"+branch.value)...)
-		} else {
-			w.command(label, "git", "pull", "--ff-only", "--", remote.value, branch.value)
-		}
+		w.pullBranch("Pull from "+remote.value+"/"+target, remote.value, target, rebase.checked)
 		return nil
 	}})
 }

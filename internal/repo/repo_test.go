@@ -139,3 +139,69 @@ func TestDiscoverWorktrees(t *testing.T) {
 		t.Fatal(got, err)
 	}
 }
+
+func TestHistoryVisibilityAndCommitter(t *testing.T) {
+	dir := t.TempDir()
+	git := func(args ...string) string {
+		t.Helper()
+		out, err := Run(t.Context(), dir, "git", args...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(out)
+	}
+	git("init", "-b", "main")
+	git("config", "user.name", "Committer")
+	git("config", "user.email", "committer@example.test")
+	git("config", "commit.gpgsign", "false")
+	git("commit", "--allow-empty", "--author=Author <author@example.test>", "--date=2023-01-01T12:00:00Z", "-m", "Root")
+	root := git("rev-parse", "HEAD")
+	onlyTag := git("commit-tree", "HEAD^{tree}", "-m", "Tag-only commit")
+	git("tag", "root-tag", root)
+	git("tag", "unmerged-tag", onlyTag)
+	if err := os.WriteFile(filepath.Join(dir, "pending.txt"), []byte("local work"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("stash", "push", "-u", "-m", "Stashed change")
+	stash := git("rev-parse", "refs/stash")
+	if err := os.WriteFile(filepath.Join(dir, "another.txt"), []byte("more work"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	git("stash", "push", "-u", "-m", "Another stash")
+	latestStash := git("rev-parse", "refs/stash")
+	visible, err := Load(t.Context(), dir, Filter{Limit: 100, Order: "topo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(visible.Commits) != 4 {
+		t.Fatalf("history should omit stash helpers: %+v", visible.Commits)
+	}
+	for _, hash := range []string{root, onlyTag, stash, latestStash} {
+		if !slices.ContainsFunc(visible.Commits, func(c Commit) bool { return c.Hash == hash }) {
+			t.Errorf("missing visible commit %s", hash)
+		}
+	}
+	for _, c := range visible.Commits {
+		if (c.Hash == stash || c.Hash == latestStash) && c.Parents != root {
+			t.Errorf("stash %s parents = %q, want only its base %s", c.Hash, c.Parents, root)
+		}
+	}
+	page, err := Load(t.Context(), dir, Filter{Limit: 3, Order: "topo"})
+	if err != nil || len(page.Commits) != 3 || !page.More {
+		t.Fatalf("first history page size = %d, more = %v, error = %v", len(page.Commits), page.More, err)
+	}
+	hidden, err := Load(t.Context(), dir, Filter{Limit: 100, Order: "author-date", HideTags: true, HideStashes: true})
+	if err != nil || len(hidden.Commits) != 1 || len(hidden.Stashes) != 2 {
+		t.Fatalf("filtered history: %+v, err = %v", hidden, err)
+	}
+	commit := hidden.Commits[0]
+	if commit.Hash != root || strings.Contains(commit.Refs, "root-tag") || commit.Author != "Author" ||
+		commit.Committer != "Committer" || commit.CommitterEmail != "committer@example.test" ||
+		!strings.HasPrefix(commit.Date, "2023-01-01T12:00:00") || commit.CommitDate == "" || commit.CommitDate == commit.Date {
+		t.Fatalf("filtered root commit = %+v", commit)
+	}
+	_, changed, err := LoadIfChanged(t.Context(), dir, Filter{Limit: 100}, hidden.Revision)
+	if err != nil || changed {
+		t.Fatalf("unchanged repository reported changed = %v, err = %v", changed, err)
+	}
+}

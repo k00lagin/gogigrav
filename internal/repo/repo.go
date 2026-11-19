@@ -4,6 +4,7 @@ package repo
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"os"
@@ -16,9 +17,16 @@ import (
 )
 
 func Run(ctx context.Context, dir, tool string, args ...string) (string, error) {
+	return run(ctx, dir, tool, "", args...)
+}
+
+func run(ctx context.Context, dir, tool, input string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, executable(tool), args...)
 	hideConsole(cmd)
 	cmd.Dir = dir
+	if input != "" {
+		cmd.Stdin = strings.NewReader(input)
+	}
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GH_PROMPT_DISABLED=1", "GH_NO_UPDATE_NOTIFIER=1", "GIT_EDITOR=true", "GIT_LITERAL_PATHSPECS=1")
 	var out, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &stderr
@@ -86,25 +94,47 @@ type File struct {
 func (f File) Staged() bool   { return f.Index != ' ' && f.Index != '?' }
 func (f File) Unstaged() bool { return f.Work != ' ' }
 
-type Commit struct{ Hash, Parents, Author, Email, Date, Refs, Subject, Body string }
+type Commit struct {
+	Hash, Parents, Author, Email, Date, Refs, Subject, Body string
+	Committer, CommitterEmail, CommitDate                   string
+}
 
 func (c Commit) Short() string { return c.Hash[:min(8, len(c.Hash))] }
 
-type Snapshot struct {
-	Branch, Upstream, Head     string
-	Ahead, Behind              int
-	Branches, Remotes, Stashes []string
-	Files                      []File
-	Commits                    []Commit
-	More                       bool
-}
-type Filter struct {
-	Refs   []string
-	Remote bool
-	Limit  int
+type Stash struct {
+	Selector, Hash, Message string
 }
 
-const RemoteRefPrefix = "refs/remotes/"
+type Snapshot struct {
+	Branch, Upstream, Head      string
+	UpstreamRemote, UpstreamRef string
+	Ahead, Behind               int
+	Branches, Remotes           []string
+	Stashes                     []Stash
+	Files                       []File
+	Commits                     []Commit
+	More                        bool
+	Revision                    [sha256.Size]byte
+}
+type Filter struct {
+	Refs                  []string
+	Remote                bool
+	Limit                 int
+	Order                 string
+	HideTags, HideStashes bool
+}
+
+const (
+	LocalRefPrefix  = "refs/heads/"
+	RemoteRefPrefix = "refs/remotes/"
+)
+
+func (s Snapshot) CurrentBranch() string {
+	if s.Branch == "(detached)" {
+		return ""
+	}
+	return s.Branch
+}
 
 // VisibleRefs returns the selected refs that can contribute to the history.
 func (f Filter) VisibleRefs() []string {
@@ -117,45 +147,85 @@ func (f Filter) VisibleRefs() []string {
 }
 
 func Load(ctx context.Context, dir string, f Filter) (Snapshot, error) {
+	s, _, err := LoadIfChanged(ctx, dir, f, [sha256.Size]byte{})
+	return s, err
+}
+
+// LoadIfChanged checks the status and refs before re-reading the history.
+func LoadIfChanged(ctx context.Context, dir string, f Filter, previous [sha256.Size]byte) (Snapshot, bool, error) {
 	var s Snapshot
 	git := func(args ...string) (string, error) { return Run(ctx, dir, "git", args...) }
-	status, err := git("status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all")
+	status, err := git("--no-optional-locks", "status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all")
 	if err != nil {
-		return s, err
+		return s, false, err
 	}
-	if err = parseStatus(status, &s); err != nil {
-		return s, err
-	}
-	branches, err := git("for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes")
+	refs, err := git("for-each-ref", "--format=%(refname)%00%(symref)%00%(upstream:remotename)%00%(upstream:remoteref)%00%(objectname)", "refs/heads", "refs/remotes", "refs/tags")
 	if err != nil {
-		return s, err
-	}
-	for _, b := range strings.Fields(branches) {
-		if !strings.HasSuffix(b, "/HEAD") {
-			s.Branches = append(s.Branches, b)
-		}
+		return s, false, err
 	}
 	remotes, err := git("remote")
 	if err != nil {
-		return s, err
+		return s, false, err
+	}
+	stashes, err := git("stash", "list", "--format=%gd%x00%H%x00%gs")
+	if err != nil {
+		return s, false, err
+	}
+	s.Revision = sha256.Sum256([]byte(strings.Join([]string{status, refs, remotes, stashes}, "\x00")))
+	if s.Revision == previous {
+		return s, false, nil
+	}
+	if err = parseStatus(status, &s); err != nil {
+		return s, false, err
+	}
+	for _, line := range lines(refs) {
+		fields := strings.Split(line, "\x00")
+		if len(fields) != 5 || fields[1] != "" || strings.HasPrefix(fields[0], "refs/tags/") {
+			continue
+		}
+		s.Branches = append(s.Branches, fields[0])
+		if fields[0] == LocalRefPrefix+s.CurrentBranch() {
+			s.UpstreamRemote, s.UpstreamRef = fields[2], fields[3]
+		}
 	}
 	s.Remotes = strings.Fields(remotes)
-	stashes, err := git("stash", "list", "--format=%gd  %gs")
-	if err != nil {
-		return s, err
+	for _, line := range lines(stashes) {
+		if fields := strings.SplitN(line, "\x00", 3); len(fields) == 3 {
+			s.Stashes = append(s.Stashes, Stash{Selector: fields[0], Hash: fields[1], Message: fields[2]})
+		}
 	}
-	s.Stashes = lines(stashes)
 	s.Commits, s.More, err = LoadHistory(ctx, dir, s, f)
-	return s, err
+	return s, true, err
 }
 
 // LoadHistory reads commits for the filter using the last known repository metadata.
 func LoadHistory(ctx context.Context, dir string, s Snapshot, f Filter) ([]Commit, bool, error) {
-	args := []string{"log", "--no-color", "--decorate=short", "--date-order", "-z", "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%D%x00%s%x00%b", "-n", strconv.Itoa(f.Limit + 1)}
+	order := "--date-order"
+	switch f.Order {
+	case "author-date":
+		order = "--author-date-order"
+	case "topo":
+		order = "--topo-order"
+	}
+	refs := f.VisibleRefs()
+	var stashes []Stash
+	if len(refs) == 0 && !f.HideStashes {
+		stashes = s.Stashes
+	}
+	// Git can return an index and an untracked-files commit for each stash.
+	// Leave room for them so they don't consume the visible history limit.
+	rawLimit := f.Limit + 1 + 2*len(stashes)
+	args := []string{"log", "--no-color", "--decorate=short", order, "-z", "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%D%x00%s%x00%b%x00%cn%x00%ce%x00%cI", "-n", strconv.Itoa(rawLimit)}
 	if !f.Remote {
 		args = append(args, "--decorate-refs-exclude="+RemoteRefPrefix+"*")
 	}
-	if refs := f.VisibleRefs(); len(refs) > 0 {
+	if f.HideTags {
+		args = append(args, "--decorate-refs-exclude=refs/tags/*")
+	}
+	if f.HideStashes {
+		args = append(args, "--decorate-refs-exclude=refs/stash")
+	}
+	if len(refs) > 0 {
 		for _, ref := range refs {
 			if !slices.Contains(s.Branches, ref) {
 				return nil, false, fmt.Errorf("branch %s is no longer available", ref)
@@ -163,27 +233,44 @@ func LoadHistory(ctx context.Context, dir string, s Snapshot, f Filter) ([]Commi
 		}
 		args = append(args, refs...)
 	} else {
-		args = append(args, "--branches", "--tags")
+		args = append(args, "--branches")
+		if !f.HideTags {
+			args = append(args, "--tags")
+		}
 		if f.Remote {
 			args = append(args, "--remotes")
-		}
-		if len(s.Stashes) > 0 {
-			args = append(args, "refs/stash")
 		}
 		if s.Head != "" {
 			args = append(args, "HEAD")
 		}
 	}
-	raw, err := Run(ctx, dir, "git", append(args, "--")...)
+	var input strings.Builder
+	stashHashes := make(map[string]bool, len(stashes))
+	for _, stash := range stashes {
+		if stash.Hash != "" && !stashHashes[stash.Hash] {
+			stashHashes[stash.Hash] = true
+			input.WriteString(stash.Hash + "\n")
+		}
+	}
+	if input.Len() > 0 {
+		args = append(args, "--stdin")
+	}
+	raw, err := run(ctx, dir, "git", input.String(), append(args, "--")...)
 	if err != nil {
 		return nil, false, err
 	}
 	var commits []Commit
 	fields := strings.Split(strings.TrimSuffix(raw, "\x00"), "\x00")
-	for len(fields) >= 8 {
-		c := Commit{fields[0], fields[1], fields[2], fields[3], fields[4], fields[5], fields[6], strings.TrimSpace(fields[7])}
+	for len(fields) >= 11 {
+		c := Commit{
+			Hash: fields[0], Parents: fields[1], Author: fields[2], Email: fields[3], Date: fields[4], Refs: fields[5],
+			Subject: fields[6], Body: strings.TrimSpace(fields[7]), Committer: fields[8], CommitterEmail: fields[9], CommitDate: fields[10],
+		}
 		commits = append(commits, c)
-		fields = fields[8:]
+		fields = fields[11:]
+	}
+	if len(stashHashes) != 0 {
+		commits = hideStashHelpers(commits, stashHashes)
 	}
 	if len(commits) > f.Limit {
 		return commits[:f.Limit], true, nil
@@ -191,12 +278,33 @@ func LoadHistory(ctx context.Context, dir string, s Snapshot, f Filter) ([]Commi
 	return commits, false, nil
 }
 
+func hideStashHelpers(commits []Commit, stashes map[string]bool) []Commit {
+	helpers := make(map[string]bool)
+	referenced := make(map[string]bool)
+	for i, c := range commits {
+		parents := strings.Fields(c.Parents)
+		if stashes[c.Hash] && len(parents) > 1 {
+			commits[i].Parents = parents[0]
+			for _, parent := range parents[1:] {
+				helpers[parent] = true
+			}
+			parents = parents[:1]
+		}
+		for _, parent := range parents {
+			referenced[parent] = true
+		}
+	}
+	return slices.DeleteFunc(commits, func(c Commit) bool {
+		return helpers[c.Hash] && !referenced[c.Hash] && c.Refs == "" && !stashes[c.Hash]
+	})
+}
+
 func lines(s string) []string {
 	s = strings.TrimRight(s, "\r\n")
 	if s == "" {
 		return nil
 	}
-	return strings.Split(s, "\n")
+	return strings.Split(strings.ReplaceAll(s, "\r\n", "\n"), "\n")
 }
 
 func parseStatus(raw string, s *Snapshot) error {
