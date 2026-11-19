@@ -52,8 +52,15 @@ func TestToolbarPopup_SearchAndSelect(t *testing.T) {
 	}
 	for _, char := range "FEATURE" {
 		win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyUnknown, char, event.ModNone))
+		win.HandleEvent(event.NewKeyEvent(event.KeyRelease, event.KeyUnknown, char, event.ModNone))
+		w.ui.Frame()
+		if !field.IsFocused() || win.Context().FocusedWidget() != field {
+			t.Fatalf("popup search lost focus after typing %q", char)
+		}
 	}
-	w.ui.Frame()
+	if got := field.Text(); got != "FEATURE" {
+		t.Fatalf("search text = %q, want FEATURE", got)
+	}
 	overlays := win.OverlayContentWidgets()
 	positioned := overlays[0].(interface {
 		Bounds() geometry.Rect
@@ -62,24 +69,30 @@ func TestToolbarPopup_SearchAndSelect(t *testing.T) {
 	popupBounds := positioned.Bounds()
 	// Desktop stamps the window-space overlay origin before recording.
 	positioned.SetScreenOrigin(popupBounds.Min)
-	app.PaintOverlayBoundaries(overlays, win.Context())
-	layers := compositor.NewOffsetLayer(geometry.Point{})
-	app.AppendOverlaysToLayerTree(layers, overlays, nil)
-	var rows []geometry.Point
-	var collectRows func(compositor.Layer)
-	collectRows = func(layer compositor.Layer) {
-		switch layer := layer.(type) {
-		case *compositor.PictureLayerImpl:
-			if layer.ScreenOrigin() != popupBounds.Min {
-				rows = append(rows, layer.ScreenOrigin())
-			}
-		case compositor.ContainerLayer:
-			for _, child := range layer.Children() {
-				collectRows(child)
+	var previous *compositor.OffsetLayerImpl
+	paintRows := func() []geometry.Point {
+		app.PaintOverlayBoundaries(overlays, win.Context())
+		layers := compositor.NewOffsetLayer(geometry.Point{})
+		app.AppendOverlaysToLayerTree(layers, overlays, previous)
+		previous = layers
+		var rows []geometry.Point
+		var collectRows func(compositor.Layer)
+		collectRows = func(layer compositor.Layer) {
+			switch layer := layer.(type) {
+			case *compositor.PictureLayerImpl:
+				if layer.ScreenOrigin() != popupBounds.Min {
+					rows = append(rows, layer.ScreenOrigin())
+				}
+			case compositor.ContainerLayer:
+				for _, child := range layer.Children() {
+					collectRows(child)
+				}
 			}
 		}
+		collectRows(layers)
+		return rows
 	}
-	collectRows(layers)
+	rows := paintRows()
 	for i, origin := range rows {
 		want := popupBounds.Min.Add(geometry.Pt(8, 8+field.Bounds().Height()+6+float32(i)*28))
 		if origin != want {
@@ -92,6 +105,17 @@ func TestToolbarPopup_SearchAndSelect(t *testing.T) {
 	if origin := field.ScreenBounds().Min; origin != popupBounds.Min.Add(geometry.Pt(8, 8)) {
 		t.Errorf("search field origin = %v, popup starts at %v", origin, popupBounds.Min)
 	}
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyUnknown, '!', event.ModNone))
+	w.ui.Frame()
+	if got := len(paintRows()); got != 0 {
+		t.Errorf("compositor kept %d rows after filtering to zero matches", got)
+	}
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyBackspace, 0, event.ModNone))
+	w.ui.Frame()
+	if got := len(paintRows()); got != 2 {
+		t.Errorf("compositor restored %d rows, want 2", got)
+	}
+
 	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyDown, 0, event.ModNone))
 	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
 	if w.popupAction == nil {
