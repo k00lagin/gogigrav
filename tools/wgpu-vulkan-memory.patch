@@ -1,0 +1,26 @@
+diff --git a/hal/vulkan/device.go b/hal/vulkan/device.go
+--- a/hal/vulkan/device.go
++++ b/hal/vulkan/device.go
+@@ -7,6 +7,7 @@ package vulkan
+ 
+ import (
+ 	"fmt"
++	"os"
+ 	"runtime"
+ 	"sync"
+ 	"time"
+@@ -223,7 +224,12 @@
+ 	d.queryNonCoherentAtomSize()
+ 
+-	// Create allocator with default config
+-	allocator, err := memory.NewGpuAllocator(d.handle, d.cmds, props, maxAllocSize, memory.DefaultConfig())
++	config := memory.DefaultConfig()
++	if runtime.GOOS == "windows" && os.Getenv("GOGIGRAV_VULKAN_MEMORY") != "standard" {
++		config.BlockSize = 16 << 20
++		config.DedicatedThreshold = 8 << 20
++		config.MaxBlocksPerHeap = 32
++	}
++	allocator, err := memory.NewGpuAllocator(d.handle, d.cmds, props, maxAllocSize, config)
+ 	if err != nil {
+ 		return fmt.Errorf("failed to create memory allocator: %w", err)
+ 	}

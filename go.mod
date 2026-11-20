@@ -24,3 +24,5 @@ require (
 )
 
 replace github.com/gogpu/ui => ../gogpu__ui-custom
+
+replace github.com/gogpu/wgpu v0.34.14 => ./.deps/wgpu-v0.34.14
