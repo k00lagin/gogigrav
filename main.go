@@ -163,7 +163,9 @@ func main() {
 	w.setTheme()
 	w.host = gogpu.NewApp(gogpu.DefaultConfig().
 		WithTitle("Gogigrav").WithSize(1280, 760).WithMinSize(1080, 520).WithFrameless(true))
-	w.ui = app.New(app.WithWindowProvider(w.host), app.WithPlatformProvider(w.host), app.WithEventSource(w.host.EventSource()), app.WithTheme(w.theme.AsTheme()))
+	w.ui = app.New(app.WithWindowProvider(w.host), app.WithPlatformProvider(w.host),
+		app.WithEventSource(w.host.EventSource()), app.WithTheme(w.theme.AsTheme()),
+		app.WithTextRasterizer(newPlatformTextRasterizer()))
 	w.render()
 	w.host.SetHitTestCallback(w.hitTestWindow)
 	shortcuts := w.ui.Window().FocusManager()
