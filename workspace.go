@@ -78,9 +78,6 @@ func (w *workbench) render() {
 	w.searchField = nil
 	w.loadMoreDisabled = state.NewSignal(!w.data.More || w.busy)
 	actions := w.actionToolbar(hint)
-	if active && w.searchOpen && w.viewer == nil {
-		actions = row(w.historySearchPanel(), primitives.Expanded(actions))
-	}
 	w.titleBar = w.newTitleBar(row(w.repositoryToolbar(hint)).PaddingLeft(4), actions)
 	w.inlineContent = nil
 	w.inlineGraph = nil

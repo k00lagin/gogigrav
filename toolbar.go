@@ -18,6 +18,10 @@ import (
 //go:embed assets/intui/*.svg
 var toolbarSVG embed.FS
 
+const toolbarButtonWidth = 32
+const toolbarItemGap = 6
+const toolbarEndPadding = 4
+
 var (
 	branchIcon       = intIcon("vcs")
 	createBranchIcon = intIcon("vcsAdd")
@@ -43,7 +47,11 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 		item.Enabled = enabled && !w.busy
 		return item
 	}
-	items := []toolbar.Item{toolbar.Spacer()}
+	searching := w.path != "" && w.searchOpen && w.viewer == nil
+	var items []toolbar.Item
+	if !searching {
+		items = append(items, toolbar.Spacer())
+	}
 	var bar *toolbarHints
 	addSync := func(push bool, label string, glyph icon.IconData, count int, enabled bool) {
 		index := len(items)
@@ -81,18 +89,27 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 		remotes := w.selector("Remotes", remotesIcon, 118, func() {
 			w.remotesPopup(bar, index)
 		})
-		if w.searchOpen && w.viewer == nil {
-			remotes.Width, remotes.ShowLabel = 32, false
-		}
 		items = append(items, remotes,
 			action("Refresh (F5)", icon.ExpRefresh, true, func() { w.refresh(w.filter) }),
 		)
 	}
 	items = append(items,
 		action("Settings", icon.ExpSettings, true, w.showSettings),
-		toolbar.Custom(primitives.Box().Width(4).Height(1)),
+		toolbar.Custom(primitives.Box().Width(toolbarEndPadding).Height(1)),
 	)
 	bar = w.headerToolbar(hint, items)
+	if searching {
+		width := float32(toolbarEndPadding + (len(items)-1)*toolbarItemGap)
+		for _, item := range items[:len(items)-1] {
+			if item.Width > 0 {
+				width += item.Width
+			} else {
+				width += toolbarButtonWidth
+			}
+		}
+		searchSlot := row(primitives.Expanded(primitives.Box()), w.historySearchPanel())
+		return row(primitives.Expanded(searchSlot), primitives.VBox(bar).Width(width))
+	}
 	return bar
 }
 
@@ -100,7 +117,7 @@ func (w *workbench) headerToolbar(hint state.Signal[string], items []toolbar.Ite
 	painter := w.paint.Toolbar
 	painter.IconSize = 20
 	bar := toolbar.New(toolbar.Items(items...), toolbar.Height(titleBarHeight),
-		toolbar.ButtonSize(32), toolbar.ButtonHeight(32), toolbar.Gap(6),
+		toolbar.ButtonSize(toolbarButtonWidth), toolbar.ButtonHeight(32), toolbar.Gap(toolbarItemGap),
 		toolbar.PainterOpt(actionToolbarPainter{painter, w}))
 	return &toolbarHints{Widget: bar, hint: hint, bench: w}
 }

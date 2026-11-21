@@ -4,6 +4,8 @@ import (
 	"github.com/gogpu/gpucontext"
 	"github.com/gogpu/ui/core/titlebar"
 	"github.com/gogpu/ui/event"
+	"github.com/gogpu/ui/geometry"
+	"github.com/gogpu/ui/gesture"
 	"github.com/gogpu/ui/theme/devtools"
 	"github.com/gogpu/ui/widget"
 )
@@ -13,6 +15,18 @@ const titleBarHeight = 42
 type workbenchTitleBar struct {
 	*titlebar.Widget
 	bench *workbench
+}
+
+func (bar *workbenchTitleBar) GestureHitTest(position geometry.Point) []gesture.Recognizer {
+	// The title bar's recognizer handles chrome only. Its child buttons
+	// must be able to win the click when the pointer is over them.
+	at := bar.ScreenOrigin().Add(position)
+	switch bar.HitTest(float64(at.X), float64(at.Y)) {
+	case titlebar.HitTestClose, titlebar.HitTestMaximize, titlebar.HitTestMinimize:
+		return bar.Widget.GestureHitTest(position)
+	default:
+		return nil
+	}
 }
 
 func (bar *workbenchTitleBar) Event(ctx widget.Context, e event.Event) bool {

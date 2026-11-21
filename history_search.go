@@ -5,11 +5,17 @@ import (
 	"strings"
 
 	"github.com/gogpu/ui/core/button"
+	"github.com/gogpu/ui/core/textfield"
+	"github.com/gogpu/ui/geometry"
 	"github.com/gogpu/ui/icon"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
+	"github.com/gogpu/ui/theme/devtools"
 	"github.com/gogpu/ui/widget"
 )
+
+const historySearchPlaceholder = "Find (message, author, hash, ref)"
+const compactSearchPlaceholder = "Find…"
 
 func (w *workbench) showSearch() {
 	if w.path == "" || w.busy || w.viewer != nil {
@@ -35,24 +41,75 @@ func (w *workbench) historySearchPanel() widget.Widget {
 	w.searchSummary = state.NewSignal("")
 	w.searchDisabled = state.NewSignal(true)
 	w.updateHistorySearchSummary()
-	w.searchField = w.input("Find message, author, hash, ref", w.search, func(query string) {
-		w.search, w.searchIndex = query, 0
-		w.updateHistorySearch()
-		w.revealSearchMatch()
-	}, func(string) { w.stepSearch(1) })
-	control := func(label, hint string, disabled state.Signal[bool], action func()) widget.Widget {
-		return button.New(button.TextOpt(label), button.A11yHint(hint),
+	cs := w.theme.Colors
+	w.searchField = textfield.New(
+		textfield.Placeholder(historySearchPlaceholder),
+		textfield.A11yLabel("Find in history"),
+		textfield.InitialValue(w.search), textfield.Disabled(w.busy),
+		textfield.PainterOpt(searchFieldPainter{w.paint.TextField}),
+		textfield.ContextMenuPainterOpt(w.paint.Menu),
+		textfield.OnChange(func(query string) {
+			w.search, w.searchIndex = query, 0
+			w.updateHistorySearch()
+			w.revealSearchMatch()
+		}), textfield.OnSubmit(func(string) { w.stepSearch(1) }),
+	)
+	control := func(glyph icon.IconData, hint string, disabled state.Signal[bool], action func()) widget.Widget {
+		return button.New(button.A11yHint(hint),
 			button.SizeOpt(button.Small), button.VariantOpt(button.TextOnly),
-			button.DisabledSignal(disabled), button.PainterOpt(w.paint.Button), button.OnClick(action))
+			button.DisabledSignal(disabled), button.PainterOpt(searchButtonPainter{w.paint.Button, glyph}), button.OnClick(action))
 	}
 	return primitives.HBox(
-		icon.NewIcon(icon.ExpSearch, icon.Size(13), icon.Color(w.theme.Colors.OnSurfaceSecondary)),
-		primitives.Expanded(compactInput(w.searchField)),
-		w.muted("").FontSize(11).ContentSignal(w.searchSummary).MaxLines(1),
-		control("↑", "Previous match (Shift+Enter)", w.searchDisabled, func() { w.stepSearch(-1) }),
-		control("↓", "Next match (Enter)", w.searchDisabled, func() { w.stepSearch(1) }),
-		control("×", "Close search (Esc)", nil, w.closeSearch),
-	).Width(254).Gap(2).CrossAlign(primitives.CrossAxisCenter)
+		primitives.VBox(icon.NewIcon(icon.ExpSearch, icon.Size(14), icon.Color(cs.OnSurfaceSecondary))).Width(14).Height(14),
+		primitives.Expanded(primitives.VBox(w.searchField).Height(26)),
+		w.muted("").FontSize(10).ContentSignal(w.searchSummary).MaxLines(1),
+		control(searchChevronUp, "Previous match (Shift+Enter)", w.searchDisabled, func() { w.stepSearch(-1) }),
+		control(icon.ExpChevronDown, "Next match (Enter)", w.searchDisabled, func() { w.stepSearch(1) }),
+		control(icon.ExpClose, "Close search (Esc)", nil, w.closeSearch),
+	).MaxWidthValue(320).Height(28).PaddingXY(5, 0).Gap(2).Rounded(4).
+		Background(cs.ControlFill).BorderStyle(1, cs.Border).CrossAlign(primitives.CrossAxisCenter)
+}
+
+var searchChevronUp = icon.FromSVG("history-search-up", 16, "M3 10L8 5L13 10L12 11L8 7L4 11Z")
+
+type searchFieldPainter struct{ devtools.TextFieldPainter }
+
+func (searchFieldPainter) ContentPadding() (float32, float32) { return 0, 2 }
+
+func (p searchFieldPainter) PaintTextField(canvas widget.Canvas, field *textfield.PaintState) {
+	cs := p.Theme.Colors
+	canvas.PushClip(field.ContentRect)
+	defer canvas.PopClip()
+	if field.ShowSelection {
+		canvas.DrawRect(field.SelectionRect, cs.Selection)
+	}
+	text, bounds, color := field.DisplayText, field.TextRect, cs.OnSurface
+	if text == "" {
+		text, bounds, color = field.Placeholder, field.ContentRect, cs.OnSurfaceSecondary
+		if canvas.MeasureText(text, field.FontSize, false) > bounds.Width() {
+			text = compactSearchPlaceholder
+		}
+	}
+	canvas.DrawText(text, bounds, field.FontSize, color, false, widget.TextAlignLeft)
+	textfield.PaintCursor(canvas, field, cs.OnSurface, 0)
+}
+
+type searchButtonPainter struct {
+	devtools.ButtonPainter
+	glyph icon.IconData
+}
+
+func (searchButtonPainter) ButtonHeight(button.Size) float32             { return 22 }
+func (searchButtonPainter) ButtonPadding(button.Size) (float32, float32) { return 11, 0 }
+
+func (p searchButtonPainter) PaintButton(canvas widget.Canvas, state button.PaintState) {
+	p.ButtonPainter.PaintButton(canvas, state)
+	color := p.Theme.Colors.OnSurfaceSecondary
+	if state.Disabled {
+		color = p.Theme.Colors.OnSurfaceDisabled
+	}
+	center := state.Bounds.Center()
+	icon.Draw(canvas, p.glyph, geometry.NewRect(center.X-6, center.Y-6, 12, 12), color)
 }
 
 func (w *workbench) updateHistorySearch() {

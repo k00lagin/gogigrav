@@ -94,6 +94,8 @@ func (w *workbench) openAnchoredPopup(trigger popupAnchor, id string, anchor fun
 				w.repoSearchCancel = nil
 			}
 			w.openPopup, w.popupIcon = nil, ""
+			w.popupAnchor = nil
+			w.popupLayer = nil
 			ctx.RequestFocus(trigger)
 			trigger.SetNeedsRedraw(true)
 			ctx.InvalidateRect(trigger.ScreenBounds())
@@ -102,6 +104,8 @@ func (w *workbench) openAnchoredPopup(trigger popupAnchor, id string, anchor fun
 	popup.Show(ctx)
 	if popup.IsOpen() {
 		w.openPopup, w.popupIcon = popup, id
+		w.popupAnchor = anchor
+		w.popupLayer = w.ui.Window().Overlays().TopInteractive()
 		if focus != nil {
 			ctx.RequestFocus(focus)
 		}

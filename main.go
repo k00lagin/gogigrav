@@ -21,6 +21,8 @@ import (
 	"github.com/gogpu/ui/desktop"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/focus"
+	"github.com/gogpu/ui/geometry"
+	"github.com/gogpu/ui/overlay"
 	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/theme/devtools"
 	"github.com/gogpu/ui/widget"
@@ -95,6 +97,8 @@ type workbench struct {
 	titleBar       *workbenchTitleBar
 	openPopup      *popover.Popover
 	popupIcon      string
+	popupAnchor    func() geometry.Rect
+	popupLayer     overlay.Overlay
 	popupAction    func()
 	searchOpen     bool
 	focusSearch    bool
@@ -176,7 +180,7 @@ func main() {
 	w.host = gogpu.NewApp(gogpu.DefaultConfig().
 		WithTitle("Gogigrav").WithSize(1280, 760).WithMinSize(1080, 520).WithFrameless(true))
 	w.ui = app.New(app.WithWindowProvider(w.host), app.WithPlatformProvider(w.host),
-		app.WithEventSource(w.host.EventSource()), app.WithTheme(w.theme.AsTheme()),
+		app.WithEventSource(w.overlayEventSource(w.host.EventSource())), app.WithTheme(w.theme.AsTheme()),
 		app.WithTextRasterizer(newPlatformTextRasterizer()))
 	w.render()
 	w.host.SetHitTestCallback(w.hitTestWindow)
@@ -224,7 +228,10 @@ func main() {
 	if len(paths) > 0 {
 		w.discover(paths)
 	}
-	if err := desktop.Run(w.host, w.ui); err != nil {
+	unhook := w.watchCaptionClicks()
+	err := desktop.Run(w.host, w.ui)
+	unhook()
+	if err != nil {
 		log.Fatal(err)
 	}
 }
