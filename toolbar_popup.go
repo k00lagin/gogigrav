@@ -132,6 +132,7 @@ func (w *workbench) selectPopupAction(action func()) {
 type popupChoice struct {
 	label       string
 	detail      string
+	leading     func() widget.Widget
 	glyph       icon.IconData
 	current     bool
 	action      func()
@@ -139,10 +140,12 @@ type popupChoice struct {
 }
 
 func (w *workbench) repositoriesPopup(bar *toolbarHints, index int) {
+	icons := newRepositoryIconGallery(w)
 	choices := make([]popupChoice, 0, len(w.prefs.Recent))
 	for _, path := range w.prefs.Recent {
 		choices = append(choices, popupChoice{
 			label: filepath.Base(path), detail: path, current: path == w.path,
+			leading:     func() widget.Widget { return icons.repository(path) },
 			action:      func() { w.open(path) },
 			contextMenu: func(at geometry.Point) { w.repositoryMenu(path, at) },
 		})
@@ -150,7 +153,7 @@ func (w *workbench) repositoriesPopup(bar *toolbarHints, index int) {
 	add := w.btn("Open repository…", button.TextOnly, true, func() {
 		w.selectPopupAction(func() { w.show("open") })
 	})
-	content, focus := w.searchChoicePanel(400, 42, "Search repositories or paste a path", choices, w.repositorySearch(), add)
+	content, focus := w.searchChoicePanel(400, 42, "Search repositories or paste a path", choices, w.repositorySearch(icons), add)
 	content.triggerMenu = w.repositoryTriggerMenu
 	w.openToolbarPopup(bar, index, popover.BottomStart, content, focus)
 }
@@ -213,6 +216,9 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 				content = append(content, w.muted(choice.detail).FontSize(11).MaxLines(1).Ellipsis())
 			}
 			text := primitives.VBox(content...)
+			if choice.leading != nil {
+				return row(choice.leading(), primitives.Expanded(text)).Gap(8).PaddingXY(8, 3)
+			}
 			if choice.glyph.Name != "" {
 				color := w.theme.Colors.OnSurfaceSecondary
 				if choice.action == nil {
@@ -313,19 +319,19 @@ func (p *choicePanelKeys) Event(ctx widget.Context, e event.Event) bool {
 		if p.triggerMenu != nil && p.triggerMenu(mouse.GlobalPosition) {
 			return true
 		}
-		if bounds.Contains(mouse.GlobalPosition) {
+		if p.menu != nil && bounds.Contains(mouse.GlobalPosition) {
 			i := int((mouse.GlobalPosition.Y - bounds.Min.Y + p.scroll.Get()) / p.rowHeight)
 			if p.menu(i, mouse.GlobalPosition) {
 				return true
 			}
 		}
 	}
+	if key, ok := e.(*event.KeyEvent); ok && p.menu != nil && ctx.IsFocused(p.list) && isContextMenuKey(key) {
+		y := bounds.Min.Y + float32(p.selection.Get()+1)*p.rowHeight - p.scroll.Get()
+		return p.menu(p.selection.Get(), geometry.Pt(bounds.Min.X, max(bounds.Min.Y, min(y, bounds.Max.Y))))
+	}
 	if key, ok := e.(*event.KeyEvent); ok && key.KeyType != event.KeyRelease &&
 		ctx.IsFocused(p.focus) && p.list.GetItemCount() > 0 {
-		if isContextMenuKey(key) {
-			y := bounds.Min.Y + float32(p.selection.Get()+1)*p.rowHeight - p.scroll.Get()
-			return p.menu(p.selection.Get(), geometry.Pt(bounds.Min.X, max(bounds.Min.Y, min(y, bounds.Max.Y))))
-		}
 		delta := 0
 		switch key.Key {
 		case event.KeyDown:

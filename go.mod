@@ -8,6 +8,8 @@ require (
 	github.com/gogpu/gogpu v0.54.1
 	github.com/gogpu/gpucontext v0.32.0
 	github.com/gogpu/ui v0.0.0
+	github.com/sergeymakinen/go-ico v1.0.0
+	golang.org/x/image v0.45.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.41.0
 )
@@ -20,7 +22,7 @@ require (
 	github.com/gogpu/gputypes v0.8.2 // indirect
 	github.com/gogpu/naga v0.21.10 // indirect
 	github.com/gogpu/wgpu v0.34.14 // indirect
-	golang.org/x/image v0.45.0 // indirect
+	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
 )
 
 replace github.com/gogpu/ui => ../gogpu__ui-custom

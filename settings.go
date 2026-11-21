@@ -208,6 +208,9 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 	)
 	content := primitives.VBox(history, display, theme, remote, repository).Gap(12).PaddingXY(16, 12).
 		CrossAlign(primitives.CrossAxisStretch)
+	if setup := w.installationControl(); setup != nil {
+		content.AddChild(section("Application", row(setup)))
+	}
 	closeButton := w.btn("×", button.TextOnly, true, func() { window.Close(ctx) })
 	header := row(primitives.Expanded(text("Settings").Bold().FontSize(15)), closeButton).Height(43).PaddingXY(12, 4)
 	body := scrollview.New(content, scrollview.PainterOpt(w.paint.Scrollbar))

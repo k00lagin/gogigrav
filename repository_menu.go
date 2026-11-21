@@ -37,6 +37,11 @@ func (w *workbench) repositoryTriggerMenu(at geometry.Point) bool {
 func (w *workbench) repositoryMenu(path string, at geometry.Point) {
 	w.clearToolbarTooltip()
 	menu.NewContextMenu([]menu.MenuItem{
+		menu.Item("Repository settings…", "", func() {
+			w.closeToolbarPopup()
+			w.repositorySettings(path)
+		}),
+		menu.Sep(),
 		menu.Item("Reveal in File Explorer", "", func() {
 			if err := revealFile(path); err != nil {
 				w.showError(err)
@@ -51,6 +56,7 @@ func (w *workbench) repositoryMenu(path string, at geometry.Point) {
 func (w *workbench) removeRecentRepository(path string) {
 	w.closeToolbarPopup()
 	w.prefs.Recent = slices.DeleteFunc(w.prefs.Recent, func(p string) bool { return sameRepositoryPath(p, path) })
+	delete(w.prefs.RepositoryIcons, repositoryKey(path))
 	w.prefs.save(w.settingsPath)
 	if !sameRepositoryPath(path, w.path) {
 		w.redraw()
@@ -58,6 +64,7 @@ func (w *workbench) removeRecentRepository(path string) {
 	}
 	w.repoVersion++
 	w.path = ""
+	w.repositoryIcon = iconThumbnail{}
 	w.data = repo.Snapshot{}
 	w.table = nil
 	w.file = nil
@@ -87,7 +94,7 @@ func repositoryQuery(query string) string {
 	return query
 }
 
-func (w *workbench) repositorySearch() func(string, func([]popupChoice)) {
+func (w *workbench) repositorySearch(icons *repositoryIconGallery) func(string, func([]popupChoice)) {
 	return func(query string, publish func([]popupChoice)) {
 		if w.repoSearchCancel != nil {
 			w.repoSearchCancel()
@@ -127,6 +134,7 @@ func (w *workbench) repositorySearch() func(string, func([]popupChoice)) {
 						label = "Add " + label
 					}
 					choice := popupChoice{label: label, detail: root, glyph: icon.ExpFolder, current: root == w.path, action: func() { w.open(root) }}
+					choice.leading = func() widget.Widget { return icons.repository(root) }
 					if known {
 						choice.contextMenu = func(at geometry.Point) { w.repositoryMenu(root, at) }
 					}

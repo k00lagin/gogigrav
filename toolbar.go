@@ -180,7 +180,12 @@ func (p actionToolbarPainter) PaintButtonItem(canvas widget.Canvas, item toolbar
 		color = colors.OnSurfaceDisabled
 	}
 	center := bounds.Center().Y
-	icon.Draw(canvas, item.Icon, geometry.NewRect(bounds.Min.X+7, center-9, 18, 18), color)
+	if item.Icon.Name == icon.ExpFolder.Name && p.bench.path != "" {
+		badge := geometry.NewRect(bounds.Min.X+6, center-repositoryIconSize/2, repositoryIconSize, repositoryIconSize)
+		p.bench.repositoryIcon.draw(canvas, badge, item.Label)
+	} else {
+		icon.Draw(canvas, item.Icon, geometry.NewRect(bounds.Min.X+7, center-9, 18, 18), color)
+	}
 	chevron := geometry.NewRect(bounds.Max.X-19, center-7, 14, 14)
 	label := geometry.NewRect(bounds.Min.X+29, bounds.Min.Y, chevron.Min.X-bounds.Min.X-30, bounds.Height())
 	if !label.IsEmpty() {

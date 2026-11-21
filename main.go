@@ -28,10 +28,11 @@ import (
 )
 
 type preferences struct {
-	Light    bool
-	Recent   []string
-	Settings viewSettings
-	Columns  columnLayout
+	Light           bool
+	Recent          []string
+	RepositoryIcons map[string]string `json:",omitempty"`
+	Settings        viewSettings
+	Columns         columnLayout
 }
 
 func configPath() string {
@@ -74,40 +75,41 @@ func writePreferences(path string, p preferences) error {
 }
 
 type workbench struct {
-	host         *gogpu.App
-	ui           *app.App
-	theme        *devtools.Theme
-	paint        devtools.Painters
-	prefs        preferences
-	ctx          context.Context
-	done         chan func()
-	busy, dirty  bool
-	status       string
-	path         string
-	data         repo.Snapshot
-	filter       repo.Filter
-	page         string
-	ratio        float32
-	table        *datatable.Widget
-	searchField  *textfield.Widget
-	titleBar     *workbenchTitleBar
-	openPopup    *popover.Popover
-	popupIcon    string
-	popupAction  func()
-	searchOpen   bool
-	focusSearch  bool
-	rows         []repo.Commit
-	graph        historyGraph
-	graphPalette [graphColorCount]widget.Color
-	search       string
-	selected     state.Signal[int]
-	commit       repo.Commit
-	changed      []repo.File
-	file         *fileItem
-	viewer       *filePreview
-	drafts       map[string]string
-	form         *actionForm
-	amend        bool
+	host           *gogpu.App
+	ui             *app.App
+	theme          *devtools.Theme
+	paint          devtools.Painters
+	prefs          preferences
+	ctx            context.Context
+	done           chan func()
+	busy, dirty    bool
+	status         string
+	path           string
+	repositoryIcon iconThumbnail
+	data           repo.Snapshot
+	filter         repo.Filter
+	page           string
+	ratio          float32
+	table          *datatable.Widget
+	searchField    *textfield.Widget
+	titleBar       *workbenchTitleBar
+	openPopup      *popover.Popover
+	popupIcon      string
+	popupAction    func()
+	searchOpen     bool
+	focusSearch    bool
+	rows           []repo.Commit
+	graph          historyGraph
+	graphPalette   [graphColorCount]widget.Color
+	search         string
+	selected       state.Signal[int]
+	commit         repo.Commit
+	changed        []repo.File
+	file           *fileItem
+	viewer         *filePreview
+	drafts         map[string]string
+	form           *actionForm
+	amend          bool
 
 	historyHeader    *historyHeader
 	repoSearchCancel context.CancelFunc
@@ -137,8 +139,12 @@ type workbench struct {
 }
 
 func main() {
+	runSetup := installationCLI()
 	themeName := flag.String("theme", "", "DevTools or DevTools Dark")
 	flag.Parse()
+	if runSetup() {
+		return
+	}
 	settingsPath := configPath()
 	var prefs preferences
 	if data, err := os.ReadFile(settingsPath); err == nil {
@@ -276,8 +282,11 @@ func (w *workbench) runJob(work func(context.Context) (func(), error), finish fu
 		ctx, cancel := context.WithTimeout(w.ctx, 5*time.Minute)
 		defer cancel()
 		apply, err := work(ctx)
-		w.done <- func() { finish(apply, err) }
-		w.host.RequestRedraw()
+		select {
+		case w.done <- func() { finish(apply, err) }:
+			w.host.RequestRedraw()
+		case <-w.ctx.Done():
+		}
 	}()
 }
 func (w *workbench) discover(paths []string) {
@@ -317,10 +326,16 @@ func (w *workbench) open(path string) {
 		return
 	}
 	f := w.prefs.Settings.historyFilter()
+	iconPath := w.prefs.RepositoryIcons[repositoryKey(path)]
 	w.job("Read repository", func(ctx context.Context) (func(), error) {
 		data, err := repo.Load(ctx, path, f)
+		if err != nil {
+			return nil, err
+		}
+		thumbnail := resolveRepositoryIcon(path, iconPath)
 		return func() {
 			w.path, w.filter, w.data = path, f, data
+			w.repositoryIcon = thumbnail
 			w.closePreview()
 			w.search = ""
 			w.table = nil
@@ -334,7 +349,7 @@ func (w *workbench) open(path string) {
 			w.prefs.save(w.settingsPath)
 			w.filterRows()
 			w.scheduleAutoRefresh()
-		}, err
+		}, nil
 	})
 }
 func (w *workbench) refresh(f repo.Filter) {

@@ -31,7 +31,8 @@ func (w *workbench) btn(s string, v button.Variant, enabled bool, fn func()) wid
 	return button.New(button.TextOpt(s), button.VariantOpt(v), button.SizeOpt(button.Small), button.Disabled(!enabled || w.busy), button.OnClick(fn), button.PainterOpt(w.paint.Button))
 }
 func (w *workbench) input(label, val string, change func(string), submit func(string)) *textfield.Widget {
-	opts := []textfield.Option{textfield.Placeholder(label), textfield.A11yLabel(label), textfield.InitialValue(val), textfield.Disabled(w.busy), textfield.PainterOpt(w.paint.TextField)}
+	opts := []textfield.Option{textfield.Placeholder(label), textfield.A11yLabel(label), textfield.InitialValue(val),
+		textfield.Disabled(w.busy), textfield.PainterOpt(w.paint.TextField), textfield.ContextMenuPainterOpt(w.paint.Menu)}
 	if change != nil {
 		opts = append(opts, textfield.OnChange(change))
 	}

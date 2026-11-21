@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gogpu/ui/core/listview"
+	"github.com/gogpu/ui/core/textfield"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
 	"github.com/gogpu/ui/uitest"
@@ -57,25 +58,50 @@ func TestRepositoryMenusAndPastedPath(t *testing.T) {
 	clipboard := &repositoryClipboard{value: `"` + other + `"`}
 	widget.RegisterClipboardProvider(clipboard)
 	defer widget.RegisterClipboardProvider(nil)
-	key(event.KeyV, event.ModCtrl)
-	select {
-	case apply := <-w.done:
-		apply()
-	case <-time.After(10 * time.Second):
-		t.Fatal("pasted path was not resolved")
+	field, ok := win.Context().FocusedWidget().(*textfield.Widget)
+	if !ok {
+		t.Fatal("repository search field lost focus")
 	}
-	w.ui.Frame()
+	right(field.ScreenBounds().Center())
+	if win.OverlayCount() != 2 {
+		t.Fatal("right click did not open the field's context menu")
+	}
+	key(event.KeyEscape, event.ModNone)
+	key(event.KeyF10, event.ModShift)
+	if win.OverlayCount() != 2 {
+		t.Fatal("Shift+F10 did not open the field's context menu")
+	}
+	// Paste is the only enabled entry in an empty search field.
+	key(event.KeyDown, event.ModNone)
+	key(event.KeyEnter, event.ModNone)
+	if win.OverlayCount() != 1 || !win.Context().IsFocused(field) {
+		t.Fatal("paste closed the repository popup or moved focus away from the field")
+	}
+	waitRepositoryUI(t, w, func() bool {
+		key(event.KeyEnter, event.ModNone)
+		return w.popupAction != nil
+	})
 	if list.GetItemCount() != 1 {
 		t.Fatalf("expected one resolved repository, got %d", list.GetItemCount())
 	}
-	key(event.KeyEnter, event.ModNone)
-	if w.popupAction == nil {
-		t.Fatal("Enter did not choose the resolved repository")
-	}
 	w.popupAction()
-	testWaitForGit(t, w)
+	waitRepositoryUI(t, w, func() bool { return !w.busy })
 	if !sameRepositoryPath(w.path, other) {
 		t.Fatalf("opened %q, want %q", w.path, other)
+	}
+}
+
+func waitRepositoryUI(t *testing.T, w *workbench, ready func() bool) {
+	t.Helper()
+	timeout := time.After(10 * time.Second)
+	for !ready() {
+		select {
+		case apply := <-w.done:
+			apply()
+			w.ui.Frame()
+		case <-timeout:
+			t.Fatal("timed out waiting for repository UI")
+		}
 	}
 }
 
