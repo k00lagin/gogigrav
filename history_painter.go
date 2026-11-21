@@ -21,10 +21,14 @@ type historyPainter struct {
 	devtools.DataTablePainter
 	bench   *workbench
 	columns []datatable.Column
+	history *historyHeader
 }
 
 func (p historyPainter) PaintRow(canvas widget.Canvas, row datatable.RowPaintState) {
 	p.DataTablePainter.PaintRow(canvas, row)
+	if drag := p.history.branchDrag; drag.active && drag.target.row == row.RowIndex && drag.target.commit.Hash != "" {
+		canvas.DrawRect(row.Bounds, p.bench.theme.Colors.Primary.WithAlpha(.20))
+	}
 	matches := p.bench.searchMatches
 	if _, found := slices.BinarySearch(matches, row.RowIndex); found {
 		alpha := float32(0.10)
@@ -33,6 +37,11 @@ func (p historyPainter) PaintRow(canvas widget.Canvas, row datatable.RowPaintSta
 		}
 		canvas.DrawRect(row.Bounds, p.bench.theme.Colors.Primary.WithAlpha(alpha))
 	}
+}
+
+func (p historyPainter) PaintHeader(canvas widget.Canvas, bounds geometry.Rect, state datatable.HeaderPaintState) {
+	clear(p.history.badges)
+	p.DataTablePainter.PaintHeader(canvas, bounds, state)
 }
 
 func (p historyPainter) PaintHeaderCell(canvas widget.Canvas, bounds geometry.Rect, state datatable.HeaderCellPaintState) {
@@ -81,7 +90,9 @@ func (p historyPainter) PaintCell(canvas widget.Canvas, cell datatable.CellPaint
 			if cell.RowIndex < len(w.graph.rows) {
 				color = w.graphPalette[w.graph.rows[cell.RowIndex].color]
 			}
-			cell.Bounds.Min.X = paintHistoryRefs(canvas, cell.Bounds, w.historyRefs(w.rows[row]), color, w.theme.Colors.OnSurface)
+			x, badges := paintHistoryRefs(canvas, cell.Bounds, w.historyRefs(w.rows[row]), color, w.theme.Colors.OnSurface)
+			p.history.badges[cell.RowIndex] = badges
+			cell.Bounds.Min.X = x
 		}
 	}
 	p.DataTablePainter.PaintCell(canvas, cell)
@@ -110,6 +121,7 @@ func paintChangeSummary(canvas widget.Canvas, bounds geometry.Rect, summary repo
 
 type historyRef struct {
 	text, remote string
+	ref, synced  string
 	glyph        icon.IconData
 	current      bool
 }
@@ -127,7 +139,7 @@ func (w *workbench) historyRefs(c repo.Commit) []historyRef {
 			continue
 		}
 		name := shortRef(ref.Name)
-		label := historyRef{text: name, glyph: branchIcon, current: ref.Name == current}
+		label := historyRef{text: name, ref: ref.Name, glyph: branchIcon, current: ref.Name == current}
 		if label.current {
 			label.glyph = icon.Check
 		}
@@ -137,10 +149,12 @@ func (w *workbench) historyRefs(c repo.Commit) []historyRef {
 				if !ok || absorbed[remote.Name] {
 					continue
 				}
-				server, branch, _ := strings.Cut(remoteName, "/")
+				server := branchRemote(remote.Name, w.data.Remotes)
+				branch := strings.TrimPrefix(remoteName, server+"/")
 				if remote.Name == ref.Upstream || (ref.Upstream == "" && branch == name) {
 					absorbed[remote.Name] = true
 					label.remote = server
+					label.synced = remote.Name
 					break
 				}
 			}
@@ -153,13 +167,13 @@ func (w *workbench) historyRefs(c repo.Commit) []historyRef {
 	}
 	for _, ref := range refs {
 		if w.filter.Remote && strings.HasPrefix(ref.Name, repo.RemoteRefPrefix) && !absorbed[ref.Name] {
-			labels = append(labels, historyRef{text: shortRef(ref.Name), glyph: remotesIcon})
+			labels = append(labels, historyRef{text: shortRef(ref.Name), ref: ref.Name, glyph: remotesIcon})
 		}
 	}
 	if !w.filter.HideTags {
 		for _, ref := range refs {
 			if name, ok := strings.CutPrefix(ref.Name, "refs/tags/"); ok {
-				labels = append(labels, historyRef{text: name, glyph: historyTag})
+				labels = append(labels, historyRef{text: name, ref: ref.Name, glyph: historyTag})
 			}
 		}
 	}
@@ -171,9 +185,15 @@ func (w *workbench) historyRefs(c repo.Commit) []historyRef {
 	return labels
 }
 
-func paintHistoryRefs(canvas widget.Canvas, bounds geometry.Rect, labels []historyRef, color, foreground widget.Color) float32 {
+type historyBadge struct {
+	bounds geometry.Rect
+	label  historyRef
+}
+
+func paintHistoryRefs(canvas widget.Canvas, bounds geometry.Rect, labels []historyRef, color, foreground widget.Color) (float32, []historyBadge) {
 	x := bounds.Min.X
 	right := bounds.Max.X - 62
+	var badges []historyBadge
 	for _, label := range labels {
 		left := x + 6
 		if right-left < 26 {
@@ -186,6 +206,7 @@ func paintHistoryRefs(canvas widget.Canvas, bounds geometry.Rect, labels []histo
 			remoteWidth = 30 + canvas.MeasureText(label.remote, 11, false)
 		}
 		badge := geometry.NewRect(left, bounds.Center().Y-9, min(right-left, baseWidth+remoteWidth), 18)
+		badges = append(badges, historyBadge{bounds: badge, label: label})
 		alpha := float32(.12)
 		if label.current {
 			alpha = .27
@@ -205,5 +226,5 @@ func paintHistoryRefs(canvas widget.Canvas, bounds geometry.Rect, labels []histo
 		canvas.PopClip()
 		x = badge.Max.X
 	}
-	return x
+	return x, badges
 }

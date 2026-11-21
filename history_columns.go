@@ -13,6 +13,7 @@ import (
 )
 
 const historyHeaderHeight = 36
+const historyRowHeight = 27
 const historyColumnMin = 44
 
 var historyColumns = []datatable.Column{
@@ -39,6 +40,9 @@ type historyHeader struct {
 	*primitives.BoxWidget
 	bench                        *workbench
 	columns                      []datatable.Column
+	table                        *datatable.Widget
+	badges                       map[int][]historyBadge
+	branchDrag                   historyBranchDrag
 	drag, last                   string
 	pressX, startWidth, maxWidth float32
 	pressed                      time.Time
@@ -67,9 +71,7 @@ func defaultHistoryColumn(key string) datatable.Column {
 }
 
 func (h *historyHeader) Event(ctx widget.Context, e event.Event) bool {
-	if key, ok := e.(*event.KeyEvent); ok && ctx.IsFocused(h.bench.table) && isContextMenuKey(key) {
-		bounds := h.ScreenBounds()
-		h.bench.historyColumnMenu(geometry.Pt(bounds.Min.X, bounds.Min.Y+historyHeaderHeight))
+	if h.historyInteraction(ctx, e) {
 		return true
 	}
 	mouse, ok := e.(*event.MouseEvent)

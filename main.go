@@ -108,6 +108,8 @@ type workbench struct {
 	search         string
 	selected       state.Signal[int]
 	commit         repo.Commit
+	compareBase    string
+	compareTip     string
 	changed        []repo.File
 	file           *fileItem
 	viewer         *filePreview

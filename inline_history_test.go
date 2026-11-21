@@ -31,6 +31,7 @@ func TestUnifiedCommitFileTreeScroll(t *testing.T) {
 	testGit(t, path, "-c", "commit.gpgsign=false", "commit", "-m", "Add files")
 	w := testWorkbench(t, path)
 	w.prefs.Settings.UnifiedDetails = true
+	w.ui.Window().HandleResize(1080, 420)
 	w.selectHistoryRow(w.uncommittedRowCount())
 	testWaitForGit(t, w)
 

@@ -54,21 +54,9 @@ func (w *workbench) present(title string, fields []*formField, actions ...formAc
 	w.redraw()
 }
 func (w *workbench) formPanel() widget.Widget {
-	var children []widget.Widget
+	children := w.formFields(w.form.fields)
 	if w.form.description != "" {
-		children = append(children, w.muted(w.form.description))
-	}
-	for _, f := range w.form.fields {
-		if f.checkbox {
-			children = append(children, w.check(f.label, f.checked, true, func(value bool) { f.checked = value }))
-			continue
-		}
-		children = append(children, w.muted(f.label))
-		if f.choices != nil {
-			children = append(children, w.pick(f.label, f.choices, slices.Index(f.choices, f.value), func(i int) { f.value = f.choices[i] }))
-		} else {
-			children = append(children, compactInput(w.input(f.label, f.value, func(s string) { f.value = s }, nil)))
-		}
+		children = append([]widget.Widget{w.muted(w.form.description)}, children...)
 	}
 	for i, a := range w.form.actions {
 		v := button.Outlined
@@ -82,6 +70,23 @@ func (w *workbench) formPanel() widget.Widget {
 		}))
 	}
 	return scrollview.New(primitives.VBox(children...).Gap(8).Padding(12), scrollview.PainterOpt(w.paint.Scrollbar))
+}
+
+func (w *workbench) formFields(fields []*formField) []widget.Widget {
+	var children []widget.Widget
+	for _, f := range fields {
+		if f.checkbox {
+			children = append(children, w.check(f.label, f.checked, true, func(value bool) { f.checked = value }))
+			continue
+		}
+		children = append(children, w.muted(f.label))
+		if f.choices != nil {
+			children = append(children, w.pick(f.label, f.choices, slices.Index(f.choices, f.value), func(i int) { f.value = f.choices[i] }))
+		} else {
+			children = append(children, compactInput(w.input(f.label, f.value, func(s string) { f.value = s }, nil)))
+		}
+	}
+	return children
 }
 
 func (w *workbench) openPanel() widget.Widget {

@@ -45,6 +45,9 @@ func (w *workbench) target(f repo.File, unstaged bool) fileTarget {
 			before = parents[0]
 		}
 		after = w.commit.Hash
+		if w.compareBase != "" {
+			before, after = w.compareBase, w.compareTip
+		}
 	} else if unstaged {
 		before, after = repo.IndexFile, repo.WorkingFile
 		if f.Conflicted {

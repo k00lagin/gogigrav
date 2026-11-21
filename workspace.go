@@ -187,7 +187,8 @@ func (w *workbench) historyTable() *datatable.Widget {
 			cols = append(cols, col)
 		}
 	}
-	table := datatable.New(datatable.Columns(cols), datatable.RowCountFn(func() int { return len(w.rows) + w.uncommittedRowCount() }), datatable.RowHeight(27), datatable.PainterOpt(historyPainter{DataTablePainter: w.paint.DataTable, bench: w, columns: cols}), datatable.SelectedRowSignal(w.selected), datatable.SelectionModeOpt(datatable.SelectionSingle), datatable.A11yLabel("Commit history"), datatable.CellValue(func(i int, k string) string {
+	history := &historyHeader{bench: w, columns: cols, badges: make(map[int][]historyBadge)}
+	table := datatable.New(datatable.Columns(cols), datatable.RowCountFn(func() int { return len(w.rows) + w.uncommittedRowCount() }), datatable.RowHeight(historyRowHeight), datatable.PainterOpt(historyPainter{DataTablePainter: w.paint.DataTable, bench: w, columns: cols, history: history}), datatable.SelectedRowSignal(w.selected), datatable.SelectionModeOpt(datatable.SelectionSingle), datatable.A11yLabel("Commit history"), datatable.CellValue(func(i int, k string) string {
 		i -= w.uncommittedRowCount()
 		if i == -1 {
 			if k == "description" {
@@ -220,7 +221,9 @@ func (w *workbench) historyTable() *datatable.Widget {
 			w.selectHistoryRow(i)
 		}
 	}))
-	w.historyHeader = &historyHeader{BoxWidget: primitives.VBox(primitives.Expanded(table)), bench: w, columns: cols}
+	history.BoxWidget = primitives.VBox(primitives.Expanded(table))
+	history.table = table
+	w.historyHeader = history
 	return table
 }
 
@@ -246,12 +249,22 @@ func (w *workbench) selectHistoryRow(row int) {
 		w.show("changes")
 		return
 	}
-	c, path := w.rows[i], w.path
+	w.showHistoryCommit(w.rows[i], "", "")
+}
+
+func (w *workbench) showHistoryCommit(c repo.Commit, base, tip string) {
+	path := w.path
 	w.commit = c
+	w.compareBase, w.compareTip = base, tip
 	w.page = "commit"
 	w.changed = nil
 	w.job("Read changed paths", func(ctx context.Context) (func(), error) {
-		files, err := repo.ChangedPaths(ctx, path, c)
+		diff := c
+		if base != "" {
+			diff.Parents = base
+			diff.Hash = tip
+		}
+		files, err := repo.ChangedPaths(ctx, path, diff)
 		return func() { w.changed = files }, err
 	})
 }
@@ -286,6 +299,10 @@ func (w *workbench) panel() widget.Widget {
 func (w *workbench) commitPanel(inline bool) widget.Widget {
 	c := w.commit
 	meta := []widget.Widget{w.text(c.Subject).Bold().MaxLines(3), w.muted(c.Author + "  <" + c.Email + ">")}
+	if base := w.compareBase; base != "" {
+		tip := w.compareTip
+		meta = append(meta, w.muted("Comparing "+base[:min(8, len(base))]+" → "+tip[:min(8, len(tip))]))
+	}
 	if w.showCommitter(c) {
 		meta = append(meta, w.muted("Committer  "+c.Committer+"  <"+c.CommitterEmail+">"))
 	}
