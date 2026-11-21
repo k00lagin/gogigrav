@@ -140,6 +140,49 @@ func testWaitForGit(t *testing.T, w *workbench) {
 	testActionFrame(w)
 }
 
+func TestToolbarCreatesBranchInDialog(t *testing.T) {
+	dir := t.TempDir()
+	testGit(t, dir, "init", "-b", "main")
+	testGit(t, dir, "-c", "user.name=Tester", "-c", "user.email=tester@example.test",
+		"-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "First")
+	head := testGit(t, dir, "rev-parse", "HEAD")
+	w := testWorkbench(t, dir)
+	win := w.ui.Window()
+	for _, checkout := range []bool{false, true} {
+		testToolbarAction(t, w, createBranchIcon.Name)
+		w.ui.Frame()
+		win.DrawOverlays(&uitest.MockCanvas{})
+		field, focused := win.Context().FocusedWidget().(*textfield.Widget)
+		if win.OverlayCount() != 1 || !focused || w.page != "changes" {
+			t.Fatal("Create branch should open a focused dialog over the workspace")
+		}
+		name := "feature/keep-current"
+		wantBranch := "main"
+		if checkout {
+			name = "feature/switch"
+			wantBranch = name
+		} else {
+			var flag *checkbox.Widget
+			walkWidgets(win.OverlayContentWidgets()[0], func(node widget.Widget) {
+				if box, ok := node.(*checkbox.Widget); ok {
+					flag = box
+				}
+			})
+			if flag == nil {
+				t.Fatal("checkout option is missing")
+			}
+			testClick(w, flag.ScreenBounds().Center())
+			win.Context().RequestFocus(field)
+		}
+		field.SetText(name)
+		win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
+		testWaitForGit(t, w)
+		if win.HasOverlays() || w.data.CurrentBranch() != wantBranch || testGit(t, dir, "rev-parse", name) != head {
+			t.Fatalf("branch %s was not created at HEAD with checkout=%v", name, checkout)
+		}
+	}
+}
+
 func TestSyncOptionsOpenBesideTheirToolbarTriggers(t *testing.T) {
 	path := t.TempDir()
 	testGit(t, path, "init", "-b", "main")
@@ -282,17 +325,14 @@ func TestStashesMenuActions(t *testing.T) {
 	}
 	testGit(t, dir, "add", "--", "pending.txt")
 	w := testWorkbench(t, dir)
-	testToolbarAction(t, w, stashIcon.Name)
+	testToolbarAction(t, w, stashChangesIcon.Name)
 	win := w.ui.Window()
-	canvas := &uitest.MockCanvas{}
-	win.DrawOverlays(canvas)
-	children := win.OverlayContentWidgets()[0].Children()[0].Children()
-	testClick(w, children[1].(*button.Widget).ScreenBounds().Center())
-	testApplyPopupAction(t, w)
-	w.form.fields[0].value = "A pending change"
-	if err := w.form.actions[0].run(); err != nil {
-		t.Fatal(err)
+	field, focused := win.Context().FocusedWidget().(*textfield.Widget)
+	if win.OverlayCount() != 1 || !focused || w.page != "changes" {
+		t.Fatal("Stash changes should open a focused modal over the workspace")
 	}
+	field.SetText("A pending change")
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
 	testWaitForGit(t, w)
 	if len(w.data.Stashes) != 1 || w.data.Stashes[0].Hash == "" || len(w.data.Files) != 0 {
 		t.Fatalf("stash was not saved: %+v", w.data.Stashes)

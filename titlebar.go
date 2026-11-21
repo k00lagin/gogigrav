@@ -16,6 +16,18 @@ type workbenchTitleBar struct {
 }
 
 func (bar *workbenchTitleBar) Event(ctx widget.Context, e event.Event) bool {
+	w := bar.bench
+	if key, ok := e.(*event.KeyEvent); ok && key.KeyType == event.KeyPress &&
+		w.searchField != nil && ctx.IsFocused(w.searchField) {
+		if key.Key == event.KeyEscape {
+			w.closeSearch()
+			return true
+		}
+		if key.Key == event.KeyEnter && key.Modifiers().Has(event.ModShift) {
+			w.stepSearch(-1)
+			return true
+		}
+	}
 	if mouse, ok := e.(*event.MouseEvent); ok && mouse.MouseType == event.MousePress && mouse.Button == event.ButtonRight {
 		if bar.bench.repositoryTriggerMenu(mouse.GlobalPosition) {
 			return true

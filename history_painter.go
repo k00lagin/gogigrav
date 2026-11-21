@@ -23,6 +23,18 @@ type historyPainter struct {
 	columns []datatable.Column
 }
 
+func (p historyPainter) PaintRow(canvas widget.Canvas, row datatable.RowPaintState) {
+	p.DataTablePainter.PaintRow(canvas, row)
+	matches := p.bench.searchMatches
+	if _, found := slices.BinarySearch(matches, row.RowIndex); found {
+		alpha := float32(0.10)
+		if row.RowIndex == matches[p.bench.searchIndex] {
+			alpha = 0.25
+		}
+		canvas.DrawRect(row.Bounds, p.bench.theme.Colors.Primary.WithAlpha(alpha))
+	}
+}
+
 func (p historyPainter) PaintHeaderCell(canvas widget.Canvas, bounds geometry.Rect, state datatable.HeaderCellPaintState) {
 	if state.Title == historyDescription {
 		gutter := min(bounds.Width(), p.bench.graph.width())

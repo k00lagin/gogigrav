@@ -80,7 +80,13 @@ func (w *workbench) statusBar(hint state.Signal[string]) widget.Widget {
 		}
 	}
 	items = append(items, primitives.Expanded(w.muted("").FontSize(12).ContentSignal(w.statusText).MaxLines(1).Ellipsis()),
-		w.muted("").FontSize(12).ContentSignal(hint).MaxLines(1).Ellipsis(), w.muted(w.path).FontSize(12).MaxLines(1).Ellipsis())
+		w.muted("").FontSize(12).ContentSignal(hint).MaxLines(1).Ellipsis())
+	if w.path != "" {
+		items = append(items, button.New(button.TextOpt("Load more"), button.VariantOpt(button.TextOnly), button.SizeOpt(button.Small),
+			button.DisabledSignal(w.loadMoreDisabled), button.PainterOpt(w.paint.Button),
+			button.OnClick(func() { f := w.filter; f.Limit += 250; w.refresh(f) })))
+	}
+	items = append(items, w.muted(w.path).FontSize(12).MaxLines(1).Ellipsis())
 	return &statusHints{BoxWidget: row(items...).PaddingXY(8, 2).Background(w.theme.Colors.Surface), bench: w, hints: hints}
 }
 

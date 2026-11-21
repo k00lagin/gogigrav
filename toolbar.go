@@ -19,12 +19,14 @@ import (
 var toolbarSVG embed.FS
 
 var (
-	branchIcon  = intIcon("vcs")
-	stashIcon   = intIcon("stash")
-	fetchIcon   = intIcon("fetch")
-	pullIcon    = intIcon("download")
-	pushIcon    = intIcon("upload")
-	remotesIcon = intIcon("cloudService")
+	branchIcon       = intIcon("vcs")
+	createBranchIcon = intIcon("vcsAdd")
+	stashIcon        = intIcon("stash")
+	stashChangesIcon = intIcon("stashChanges")
+	fetchIcon        = intIcon("fetch")
+	pullIcon         = intIcon("download")
+	pushIcon         = intIcon("upload")
+	remotesIcon      = intIcon("cloudService")
 )
 
 func intIcon(name string) icon.IconData {
@@ -61,14 +63,12 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 		hasRemote := len(w.data.Remotes) > 0
 		hasHead := w.data.Head != ""
 		hasBranch := hasHead && w.data.CurrentBranch() != ""
-		stashIndex := len(items) + 2
+		if !w.searchOpen || w.viewer != nil {
+			items = append(items, action("Find in history (Ctrl+F)", icon.ExpSearch, w.viewer == nil, w.showSearch))
+		}
 		items = append(items,
-			action("Find in history (Ctrl+F)", icon.ExpSearch, true, w.toggleSearch),
-			action("Branches", branchIcon, hasHead, w.branchForm),
-			action("Stashes", stashIcon, true, func() {
-				content, focus := w.stashesPanel()
-				w.openToolbarPopup(bar, stashIndex, popover.BottomStart, content, focus)
-			}),
+			action("Create branch from HEAD", createBranchIcon, hasHead, func() { w.branchAt(w.data.Head) }),
+			action("Stash changes", stashChangesIcon, hasHead && len(w.data.Files) > 0, w.stashCreateForm),
 			action("Fetch all remotes", fetchIcon, hasRemote, w.fetch),
 		)
 		addSync(false, "Pull", pullIcon, w.data.Behind, hasRemote)
@@ -81,6 +81,9 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 		remotes := w.selector("Remotes", remotesIcon, 118, func() {
 			w.remotesPopup(bar, index)
 		})
+		if w.searchOpen && w.viewer == nil {
+			remotes.Width, remotes.ShowLabel = 32, false
+		}
 		items = append(items, remotes,
 			action("Refresh (F5)", icon.ExpRefresh, true, func() { w.refresh(w.filter) }),
 		)

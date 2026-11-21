@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/gogpu/ui/core/button"
+	"github.com/gogpu/ui/core/dialog"
 	"github.com/gogpu/ui/core/scrollview"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
@@ -168,35 +169,50 @@ func validName(name string) error {
 	return nil
 }
 func (w *workbench) branchAt(ref string) {
-	name := &formField{label: "New branch"}
-	w.present("Branch from "+ref[:min(8, len(ref))], []*formField{name}, formAction{"Create and switch", func() error {
-		if err := validName(name.value); err != nil {
-			return err
-		}
-		w.command("Create branch", "git", "switch", "-c", name.value, ref)
-		return nil
-	}})
-}
-func (w *workbench) branchForm() {
-	name := &formField{label: "New branch from HEAD"}
-	existing := choices("Existing branch", w.data.Branches)
-	current := repo.LocalRefPrefix + w.data.CurrentBranch()
-	if slices.Contains(existing.choices, current) {
-		existing.value = current
+	if w.busy || w.path == "" || ref == "" {
+		return
 	}
-	w.present("Branches", []*formField{name, existing}, formAction{"Create and switch", func() error {
-		if err := validName(name.value); err != nil {
-			return err
+	w.clearToolbarTooltip()
+	ctx := w.ui.Window().Context()
+	previousFocus := ctx.FocusedWidget()
+	var editor *dialog.Widget
+	checkout := true
+	message := state.NewSignal("")
+	submit := func(value string) {
+		if w.busy || !editor.IsOpen() {
+			return
 		}
-		w.command("Create branch", "git", "switch", "-c", name.value, "HEAD")
-		return nil
-	}}, formAction{"Switch to selected branch", func() error {
-		if existing.value == "" {
-			return errors.New("select a branch")
+		name := strings.TrimSpace(value)
+		if err := validName(name); err != nil {
+			message.Set(err.Error())
+			return
 		}
-		w.switchBranch(existing.value)
-		return nil
-	}})
+		args := []string{"branch", "--", name, ref}
+		if checkout {
+			args = []string{"switch", "-c", name, ref}
+		}
+		editor.Close(ctx)
+		w.command("Create branch "+name, "git", args...)
+	}
+	name := w.input("feature/my-branch", "", func(string) { message.Set("") }, submit)
+	panel := primitives.VBox(
+		w.text("Create Branch").Bold().FontSize(15),
+		line(w), w.muted("From commit "+ref[:min(8, len(ref))]),
+		w.muted("Branch name"), compactInput(name),
+		w.check("Check out after creating", true, true, func(on bool) { checkout = on }),
+		w.text("").ContentSignal(message).Color(w.theme.Colors.Error),
+		row(primitives.Expanded(primitives.Box()),
+			w.btn("Cancel", button.TextOnly, true, func() { editor.Close(ctx) }),
+			w.btn("Create Branch", button.Filled, true, func() { submit(name.Text()) })),
+	).Width(460).Gap(8).Padding(16).CrossAlign(primitives.CrossAxisStretch)
+	editor = dialog.New(dialog.ContentOnly(), dialog.Content(panel), dialog.MaxWidth(460), dialog.PainterOpt(w.paint.Dialog),
+		dialog.OnClose(func() {
+			if previousFocus != nil && !widget.IsDetached(previousFocus) {
+				ctx.RequestFocus(previousFocus)
+			}
+		}))
+	editor.Show(ctx)
+	ctx.RequestFocus(name)
 }
 func (w *workbench) switchBranch(ref string) {
 	if strings.HasPrefix(ref, repo.RemoteRefPrefix) {

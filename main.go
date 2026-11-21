@@ -98,6 +98,10 @@ type workbench struct {
 	popupAction    func()
 	searchOpen     bool
 	focusSearch    bool
+	searchMatches  []int
+	searchIndex    int
+	searchSummary  state.Signal[string]
+	searchDisabled state.Signal[bool]
 	rows           []repo.Commit
 	graph          historyGraph
 	graphPalette   [graphColorCount]widget.Color
@@ -424,13 +428,9 @@ func (w *workbench) loadBranchHistory() {
 }
 
 func (w *workbench) filterRows() {
-	needle := strings.ToLower(strings.TrimSpace(w.search))
 	w.rows = nil
 	row := w.uncommittedRowCount() - 1
 	for _, c := range w.data.Commits {
-		if needle != "" && !strings.Contains(strings.ToLower(strings.Join([]string{c.Subject, w.commitAuthor(c), c.Email, c.Hash, c.Refs, c.Body}, " ")), needle) {
-			continue
-		}
 		w.rows = append(w.rows, c)
 		if c.Hash == w.commit.Hash {
 			row = len(w.rows) - 1 + w.uncommittedRowCount()
@@ -446,6 +446,7 @@ func (w *workbench) filterRows() {
 		w.syncInlineDetails()
 		w.table.InvalidateData()
 	}
+	w.updateHistorySearch()
 }
 
 func (w *workbench) operation(label string, op func(context.Context) error, after func()) {

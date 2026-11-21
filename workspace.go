@@ -74,31 +74,24 @@ func (w *workbench) render() {
 	hint := state.NewSignal("")
 	active := w.path != ""
 	historyFocused := w.table != nil && w.ui.Window().Context().FocusedWidget() == w.table
-	w.titleBar = w.newTitleBar(row(w.repositoryToolbar(hint)).PaddingLeft(4), w.actionToolbar(hint))
+	searchFocused := w.searchField != nil && w.ui.Window().Context().FocusedWidget() == w.searchField
 	w.searchField = nil
+	w.loadMoreDisabled = state.NewSignal(!w.data.More || w.busy)
+	actions := w.actionToolbar(hint)
+	if active && w.searchOpen && w.viewer == nil {
+		actions = row(w.historySearchPanel(), primitives.Expanded(actions))
+	}
+	w.titleBar = w.newTitleBar(row(w.repositoryToolbar(hint)).PaddingLeft(4), actions)
 	w.inlineContent = nil
 	w.inlineGraph = nil
 	var body widget.Widget
 	if w.viewer != nil && active {
 		body = w.previewPanel()
 	} else if active {
-		var find widget.Widget = primitives.Box()
-		if w.searchOpen {
-			w.searchField = w.input("Find by message, author, hash or ref", w.search, func(s string) {
-				w.search = s
-				w.filterRows()
-			}, nil)
-			find = compactInput(w.searchField)
-		}
-		w.loadMoreDisabled = state.NewSignal(!w.data.More || w.busy)
-		loadMore := button.New(button.TextOpt("Load more"), button.VariantOpt(button.TextOnly),
-			button.SizeOpt(button.Small), button.DisabledSignal(w.loadMoreDisabled), button.PainterOpt(w.paint.Button),
-			button.OnClick(func() { f := w.filter; f.Limit += 250; w.refresh(f) }))
-		historyBar := row(w.text("History").Bold(), primitives.Expanded(find), loadMore).PaddingXY(10, 5).Background(cs.Surface)
 		if w.table == nil {
 			w.table = w.historyTable()
 		}
-		history := primitives.VBox(historyBar, line(w), primitives.Expanded(w.historyHeader)).Background(cs.Background)
+		history := w.historyHeader
 		detailRow := w.syncInlineDetails()
 		if w.revealInline && detailRow >= 0 {
 			w.table.ScrollToRow(detailRow)
@@ -119,34 +112,10 @@ func (w *workbench) render() {
 		w.focusHistory = false
 		w.ui.Window().Context().RequestFocus(w.table)
 	}
-	if w.focusSearch && w.searchField != nil {
+	if (w.focusSearch || searchFocused) && w.searchField != nil && !w.busy {
 		w.focusSearch = false
 		w.ui.Window().Context().RequestFocus(w.searchField)
 	}
-}
-
-func (w *workbench) showSearch() {
-	if w.path == "" || w.busy {
-		return
-	}
-	if w.searchField != nil {
-		w.ui.Window().FocusManager().Focus(w.searchField)
-		w.ui.Window().Context().RequestFocus(w.searchField)
-		return
-	}
-	w.searchOpen, w.focusSearch = true, true
-	w.redraw()
-}
-
-func (w *workbench) toggleSearch() {
-	if !w.searchOpen {
-		w.showSearch()
-		return
-	}
-	w.searchOpen = false
-	w.search = ""
-	w.filterRows()
-	w.redraw()
 }
 
 func shortRef(ref string) string {

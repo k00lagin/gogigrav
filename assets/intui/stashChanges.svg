@@ -1,0 +1,5 @@
+<!-- Archive box using the Int UI shelve icon's outline weight and colour. -->
+<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M2.5 6.5V13C2.5 13.276 2.724 13.5 3 13.5H13C13.276 13.5 13.5 13.276 13.5 13V6.5M6.5 9H9.5" stroke="#6C707E" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="1.5" y="3" width="13" height="3.5" rx=".5" stroke="#6C707E"/>
+</svg>

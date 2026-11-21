@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/dialog"
 	"github.com/gogpu/ui/primitives"
+	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/widget"
 	"gogigrav/internal/repo"
 )
@@ -32,25 +32,58 @@ func (w *workbench) stashesPanel() (widget.Widget, widget.Widget) {
 }
 
 func (w *workbench) stashCreateForm() {
-	msg := &formField{label: "Message (optional)"}
-	untracked := flagField("Include untracked files", true)
-	keepIndex := flagField("Keep staged changes", false)
-	w.present("Stash changes", []*formField{msg, untracked, keepIndex}, formAction{"Stash", func() error {
+	if w.busy || w.data.Head == "" || len(w.data.Files) == 0 {
+		return
+	}
+	w.clearToolbarTooltip()
+	ctx := w.ui.Window().Context()
+	previousFocus := ctx.FocusedWidget()
+	var editor *dialog.Widget
+	untracked, keepIndex := true, false
+	message := state.NewSignal("")
+	submit := func(text string) {
+		if w.busy || !editor.IsOpen() {
+			return
+		}
 		args := []string{"stash", "push"}
-		if untracked.checked {
+		if untracked {
 			args = append(args, "--include-untracked")
 		} else if !hasTrackedChanges(w.data.Files) {
-			return errors.New("enable Include untracked files to stash these changes")
+			message.Set("Enable Include untracked files to stash these changes.")
+			return
 		}
-		if keepIndex.checked {
+		if keepIndex {
 			args = append(args, "--keep-index")
 		}
-		if msg.value != "" {
-			args = append(args, "-m", msg.value)
+		if text != "" {
+			args = append(args, "-m", text)
 		}
+		editor.Close(ctx)
 		w.command("Stash changes", "git", args...)
-		return nil
-	}})
+	}
+	input := w.input("Message (optional)", "", nil, submit)
+	panel := primitives.VBox(
+		w.text("Stash Changes").Bold().FontSize(15),
+		line(w), w.muted("Message (optional)"), compactInput(input),
+		w.check("Include untracked files", true, true, func(on bool) {
+			untracked = on
+			message.Set("")
+		}),
+		w.check("Keep staged changes in the index (--keep-index)", false, true, func(on bool) { keepIndex = on }),
+		w.text("").ContentSignal(message).Color(w.theme.Colors.Error),
+		line(w),
+		row(primitives.Expanded(primitives.Box()),
+			w.btn("Cancel", button.TextOnly, true, func() { editor.Close(ctx) }),
+			w.btn("Stash", button.Filled, true, func() { submit(input.Text()) })),
+	).Width(460).Gap(8).Padding(16).CrossAlign(primitives.CrossAxisStretch)
+	editor = dialog.New(dialog.ContentOnly(), dialog.Content(panel), dialog.MaxWidth(460), dialog.PainterOpt(w.paint.Dialog),
+		dialog.OnClose(func() {
+			if previousFocus != nil && !widget.IsDetached(previousFocus) {
+				ctx.RequestFocus(previousFocus)
+			}
+		}))
+	editor.Show(ctx)
+	ctx.RequestFocus(input)
 }
 
 func hasTrackedChanges(files []repo.File) bool {
