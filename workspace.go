@@ -94,7 +94,7 @@ func (w *workbench) render() {
 			w.table.ScrollToRow(detailRow)
 		}
 		w.revealInline = false
-		if w.usesInlineHistory() {
+		if w.page == "history" || w.usesInlineHistory() {
 			body = history
 		} else {
 			body = splitview.New(splitview.First(history), splitview.Second(w.panel()),

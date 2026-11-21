@@ -174,7 +174,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	w := &workbench{ctx: ctx, prefs: prefs, settingsPath: settingsPath, autoRefreshTick: make(chan struct{}, 1),
-		done: make(chan func(), 1), dirty: true, page: "open", ratio: 0.65, drafts: map[string]string{}, selected: state.NewSignal(0)}
+		done: make(chan func(), 1), dirty: true, page: "open", ratio: 0.65, drafts: map[string]string{}, selected: state.NewSignal(-1)}
 	w.filter = prefs.Settings.historyFilter()
 	w.setTheme()
 	w.host = gogpu.NewApp(gogpu.DefaultConfig().
@@ -352,7 +352,7 @@ func (w *workbench) open(path string) {
 			w.closePreview()
 			w.search = ""
 			w.table = nil
-			w.page = "changes"
+			w.page = "history"
 			w.inlineClosed = false
 			w.amend = false
 			w.form = nil
@@ -446,7 +446,7 @@ func (w *workbench) filterRows() {
 		}
 	}
 	w.graph = buildHistoryGraph(w.data, w.rows, w.uncommittedRowCount() != 0)
-	if (w.page == "commit" && row < w.uncommittedRowCount()) || (w.usesInlineHistory() && w.inlineClosed) {
+	if w.page == "history" || (w.page == "commit" && row < w.uncommittedRowCount()) || (w.usesInlineHistory() && w.inlineClosed) {
 		w.selected.Set(-1)
 	} else {
 		w.selected.Set(row)

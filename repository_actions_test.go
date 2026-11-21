@@ -11,6 +11,7 @@ import (
 	"github.com/gogpu/ui/app"
 	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/checkbox"
+	"github.com/gogpu/ui/core/splitview"
 	"github.com/gogpu/ui/core/textfield"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
@@ -138,6 +139,73 @@ func testWaitForGit(t *testing.T, w *workbench) {
 		t.Fatal(w.status)
 	}
 	testActionFrame(w)
+}
+
+func TestOpeningRepositoryLeavesHistoryUnselected(t *testing.T) {
+	first, second := t.TempDir(), t.TempDir()
+	for _, path := range []string{first, second} {
+		testGit(t, path, "init", "-b", "main")
+		testGit(t, path, "-c", "user.name=Tester", "-c", "user.email=tester@example.test",
+			"-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "First")
+		if err := os.WriteFile(filepath.Join(path, "pending.txt"), []byte("working changes"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, mode := range []struct {
+		name    string
+		unified bool
+	}{{"Split", false}, {"Unified", true}} {
+		t.Run(mode.name, func(t *testing.T) {
+			w := &workbench{
+				ctx: t.Context(), done: make(chan func(), 1), page: "open", ratio: 0.65,
+				host: gogpu.NewApp(gogpu.DefaultConfig()), ui: app.New(), selected: state.NewSignal(-1),
+				drafts: make(map[string]string), prefs: preferences{Settings: viewSettings{UnifiedDetails: mode.unified}},
+			}
+			w.setTheme()
+			win := w.ui.Window()
+			win.HandleResize(1080, 520)
+			testActionFrame(w)
+
+			hasSplit := func() bool {
+				found := false
+				walkWidgets(win.Root(), func(node widget.Widget) {
+					if _, ok := node.(*splitview.Widget); ok {
+						found = true
+					}
+				})
+				return found
+			}
+			assertUnselected := func(path string) {
+				t.Helper()
+				if !sameRepositoryPath(w.path, path) || w.table == nil || w.table.GetRowCount() != 2 {
+					t.Fatalf("expected the new history with a working tree row, repo = %q, status = %q", w.path, w.status)
+				}
+				if selected, split, inline := w.selected.Get(), hasSplit(), w.inlineContent != nil; selected != -1 || split || inline {
+					t.Errorf("expected history alone, got selected row %d, split panel %v, inline panel %v", selected, split, inline)
+				}
+			}
+
+			w.discover([]string{first})
+			waitRepositoryUI(t, w, func() bool { return !w.busy })
+			testActionFrame(w)
+			assertUnselected(first)
+
+			w.refresh(w.filter)
+			testWaitForGit(t, w)
+			assertUnselected(first)
+
+			testClick(w, w.table.ScreenOrigin().Add(geometry.Pt(120, historyHeaderHeight+historyRowHeight/2)))
+			testActionFrame(w)
+			if selected, split, inline := w.selected.Get(), hasSplit(), w.inlineContent != nil; selected != 0 || split == mode.unified || inline != mode.unified {
+				t.Errorf("clicking working tree gave selected row %d, split panel %v, inline panel %v", selected, split, inline)
+			}
+
+			w.open(second)
+			testWaitForGit(t, w)
+			assertUnselected(second)
+		})
+	}
 }
 
 func TestToolbarCreatesBranchInDialog(t *testing.T) {
