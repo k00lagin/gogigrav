@@ -57,6 +57,7 @@ func (w *workbench) removeRecentRepository(path string) {
 	w.closeToolbarPopup()
 	w.prefs.Recent = slices.DeleteFunc(w.prefs.Recent, func(p string) bool { return sameRepositoryPath(p, path) })
 	delete(w.prefs.RepositoryIcons, repositoryKey(path))
+	delete(w.prefs.RepositoryVisits, repositoryKey(path))
 	w.prefs.save(w.settingsPath)
 	if !sameRepositoryPath(path, w.path) {
 		w.redraw()
@@ -74,7 +75,7 @@ func (w *workbench) removeRecentRepository(path string) {
 	w.filterRows()
 	w.show("open")
 	if len(w.prefs.Recent) > 0 {
-		w.open(w.prefs.Recent[0])
+		w.openRepository(w.prefs.Recent[0], false)
 	}
 }
 

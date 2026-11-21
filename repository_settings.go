@@ -250,7 +250,7 @@ func (w *workbench) repositorySettings(path string) {
 	content := primitives.VBox(w.text("Repository settings").Bold().FontSize(15), header, line(w), mode, compactInput(input), primitives.VBox(list).Height(190),
 		row(primitives.Expanded(w.muted("").ContentSignal(message).FontSize(11)), browse, w.btn("Close", button.TextOnly, true, func() { window.Close(ctx) }))).
 		Padding(14).Gap(6).CrossAlign(primitives.CrossAxisStretch)
-	keys := &choicePanelKeys{BoxWidget: content, focus: input, list: list, selection: index, scroll: scroll, rowHeight: rowHeight}
+	keys := &choicePanelKeys{BoxWidget: content, focus: input, list: list, selection: index, scroll: scroll}
 	indexCtx, cancel := context.WithCancel(w.ctx)
 	window = dialog.New(dialog.ContentOnly(), dialog.Content(keys), dialog.MaxWidth(490), dialog.PainterOpt(w.paint.Dialog),
 		dialog.OnClose(func() {

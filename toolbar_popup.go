@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/listview"
@@ -139,6 +141,8 @@ type popupChoice struct {
 	leading     func() widget.Widget
 	glyph       icon.IconData
 	current     bool
+	recent      bool
+	section     bool
 	action      func()
 	contextMenu func(geometry.Point)
 }
@@ -146,20 +150,40 @@ type popupChoice struct {
 func (w *workbench) repositoriesPopup(bar *toolbarHints, index int) {
 	icons := newRepositoryIconGallery(w)
 	choices := make([]popupChoice, 0, len(w.prefs.Recent))
-	for _, path := range w.prefs.Recent {
-		choices = append(choices, popupChoice{
-			label: filepath.Base(path), detail: path, current: path == w.path,
-			leading:     func() widget.Widget { return icons.repository(path) },
-			action:      func() { w.open(path) },
-			contextMenu: func(at geometry.Point) { w.repositoryMenu(path, at) },
-		})
+	appendChoices := func(paths []string, recent bool) {
+		for _, path := range paths {
+			choices = append(choices, popupChoice{
+				label: filepath.Base(path), detail: path, current: sameRepositoryPath(path, w.path), recent: recent,
+				leading:     func() widget.Widget { return icons.repository(path) },
+				action:      func() { w.open(path) },
+				contextMenu: func(at geometry.Point) { w.repositoryMenu(path, at) },
+			})
+		}
 	}
-	add := w.btn("Open repository…", button.TextOnly, true, func() {
-		w.selectPopupAction(func() { w.show("open") })
+	recent, others := w.prefs.repositoryGroups(time.Now())
+	appendChoices(recent, true)
+	appendChoices(others, false)
+	add := w.btn("+ Add repository", button.TextOnly, true, func() {
+		w.selectPopupAction(w.showRepositoryPicker)
 	})
-	content, focus := w.searchChoicePanel(400, 42, "Search repositories or paste a path", choices, w.repositorySearch(icons), add)
+	beforeList := primitives.VBox(row(add), line(w)).CrossAlign(primitives.CrossAxisStretch)
+	content, focus := w.searchChoicePanel(400, 42, "Search repositories or paste a path", choices, w.repositorySearch(icons), beforeList)
 	content.triggerMenu = w.repositoryTriggerMenu
 	w.openToolbarPopup(bar, index, popover.BottomStart, content, focus)
+}
+
+func repositoryMenuRows(choices []popupChoice) []popupChoice {
+	if len(choices) == 0 || !choices[0].recent {
+		return choices
+	}
+	rows := []popupChoice{{label: "Recent repositories", section: true}}
+	end := slices.IndexFunc(choices, func(choice popupChoice) bool { return !choice.recent })
+	if end == -1 {
+		return append(rows, choices...)
+	}
+	rows = append(rows, choices[:end]...)
+	rows = append(rows, popupChoice{section: true})
+	return append(rows, choices[end:]...)
 }
 
 func (w *workbench) remotesPopup(bar *toolbarHints, index int) {
@@ -180,16 +204,26 @@ func (w *workbench) remotesPopup(bar *toolbarHints, index int) {
 }
 
 func (w *workbench) choicePanel(width, rowHeight float32, placeholder string, choices []popupChoice, footer ...widget.Widget) (widget.Widget, widget.Widget) {
-	return w.searchChoicePanel(width, rowHeight, placeholder, choices, nil, footer...)
+	return w.searchChoicePanel(width, rowHeight, placeholder, choices, nil, nil, footer...)
 }
 
-func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder string, choices []popupChoice, search func(string, func([]popupChoice)), footer ...widget.Widget) (*choicePanelKeys, widget.Widget) {
+func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder string, choices []popupChoice, search func(string, func([]popupChoice)), beforeList widget.Widget, footer ...widget.Widget) (*choicePanelKeys, widget.Widget) {
 	matches := choices
 	selection := state.NewSignal(0)
-	for i, choice := range choices {
-		if choice.current {
-			selection.Set(i)
-			break
+	if search != nil {
+		matches = repositoryMenuRows(choices)
+		if len(matches) == 0 {
+			matches = []popupChoice{{label: "No repositories"}}
+		}
+		if matches[0].section {
+			selection.Set(1)
+		}
+	} else {
+		for i, choice := range choices {
+			if choice.current {
+				selection.Set(i)
+				break
+			}
 		}
 	}
 	scroll := state.NewSignal(float32(0))
@@ -198,16 +232,37 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 			w.selectPopupAction(matches[index].action)
 		}
 	}
+	heightAt := func(index int) float32 {
+		if matches[index].section {
+			if matches[index].label == "" {
+				return 7
+			}
+			return 22
+		}
+		return rowHeight
+	}
+	heightOption := listview.FixedItemHeight(rowHeight)
+	selectionOption := listview.SelectedIndexSignal(selection)
+	if search != nil {
+		heightOption = listview.ItemHeightFn(heightAt)
+		selectionOption = listview.SelectedIndexReadonlySignal(selection)
+	}
 	list := listview.New(
 		listview.ItemCountFn(func() int { return len(matches) }),
-		listview.FixedItemHeight(rowHeight),
+		heightOption,
 		listview.SelectionModeOpt(listview.SelectionSingle),
-		listview.SelectedIndexSignal(selection),
+		selectionOption,
 		listview.ScrollYSignal(scroll),
 		listview.OnItemClick(choose),
 		listview.PainterOpt(w.paint.ListView),
 		listview.BuildItem(func(item listview.ItemContext) widget.Widget {
 			choice := matches[item.Index]
+			if choice.section {
+				if choice.label == "" {
+					return primitives.VBox(line(w)).PaddingXY(0, 3)
+				}
+				return primitives.VBox(w.muted(choice.label).FontSize(11)).PaddingXY(8, 2)
+			}
 			label := w.text(choice.label).MaxLines(1).Ellipsis()
 			if choice.action == nil {
 				label.Color(w.theme.Colors.OnSurfaceDisabled)
@@ -235,10 +290,20 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 		}),
 	)
 	panel := primitives.VBox().Width(width).Padding(8).Gap(6)
-	listBox := primitives.VBox(list).Height(rowHeight * float32(max(1, min(8, len(choices)))))
+	visibleHeight := func() float32 {
+		var height float32
+		for i := range min(8, len(matches)) {
+			height += heightAt(i)
+		}
+		if len(matches) == 0 {
+			return rowHeight
+		}
+		return height
+	}
+	listBox := primitives.VBox(list).Height(visibleHeight())
 	refresh := func() {
 		if search != nil {
-			listBox.Height(rowHeight * float32(max(1, min(8, len(matches)))))
+			listBox.Height(visibleHeight())
 			listBox.MarkNeedsLayout()
 		}
 		list.InvalidateData()
@@ -252,42 +317,67 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 				needle = repositoryQuery(query)
 			}
 			needle = strings.ToLower(needle)
-			matches = nil
-			for _, choice := range choices {
-				if strings.Contains(strings.ToLower(choice.label+" "+choice.detail), needle) {
-					matches = append(matches, choice)
+			filterChoices := func(resolved string) []popupChoice {
+				var filtered []popupChoice
+				for _, choice := range choices {
+					if strings.Contains(strings.ToLower(choice.label+" "+choice.detail), needle) ||
+						resolved != "" && sameRepositoryPath(choice.detail, resolved) {
+						filtered = append(filtered, choice)
+					}
+				}
+				return filtered
+			}
+			local := filterChoices("")
+			matches = local
+			if search != nil {
+				matches = repositoryMenuRows(local)
+				if len(matches) == 0 {
+					label := "No matching repositories"
+					if needle == "" {
+						label = "No repositories"
+					}
+					matches = []popupChoice{{label: label}}
 				}
 			}
-			selection.Set(0)
+			first := 0
+			if len(matches) > 0 && matches[0].section {
+				first = 1
+			}
+			selection.Set(first)
 			scroll.Set(0)
 			refresh()
 			if search != nil {
-				local := matches
-				if len(local) == 0 {
-					matches = []popupChoice{{label: "No matching repositories"}}
-					refresh()
-				}
 				search(query, func(results []popupChoice) {
+					var resolved string
 					var extra []popupChoice
 					for _, result := range results {
-						found := false
-						for _, known := range local {
-							if result.detail != "" && known.contextMenu != nil && sameRepositoryPath(result.detail, known.detail) {
-								found = true
-								break
-							}
-						}
-						if !found {
+						if result.contextMenu != nil {
+							resolved = result.detail
+						} else {
 							extra = append(extra, result)
 						}
 					}
-					matches = append(local, extra...)
+					if resolved != "" {
+						local = filterChoices(resolved)
+					}
+					matches = repositoryMenuRows(append(local, extra...))
+					if resolved != "" {
+						selection.Set(slices.IndexFunc(matches, func(choice popupChoice) bool {
+							return sameRepositoryPath(choice.detail, resolved)
+						}))
+					}
 					refresh()
+					if resolved != "" {
+						list.ScrollToIndex(selection.Get())
+					}
 				})
 			}
 		}, func(string) { choose(selection.Get()) })
 		panel.AddChild(compactInput(input))
 		focus = input
+	}
+	if beforeList != nil {
+		panel.AddChild(beforeList)
 	}
 	if len(choices) > 0 || placeholder == "" || search != nil {
 		panel.AddChild(listBox)
@@ -295,7 +385,8 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 	for _, child := range footer {
 		panel.AddChild(child)
 	}
-	return &choicePanelKeys{BoxWidget: panel, focus: focus, list: list, selection: selection, scroll: scroll, rowHeight: rowHeight, wrapSelection: search != nil,
+	return &choicePanelKeys{BoxWidget: panel, focus: focus, list: list, selection: selection, scroll: scroll, heightAt: heightAt, wrapSelection: search != nil,
+		choose: choose, sectionAt: func(i int) bool { return matches[i].section },
 		menu: func(i int, at geometry.Point) bool {
 			if i < 0 || i >= len(matches) || matches[i].contextMenu == nil {
 				return false
@@ -311,7 +402,9 @@ type choicePanelKeys struct {
 	list          *listview.Widget
 	selection     state.Signal[int]
 	scroll        state.Signal[float32]
-	rowHeight     float32
+	heightAt      func(int) float32
+	choose        func(int)
+	sectionAt     func(int) bool
 	menu          func(int, geometry.Point) bool
 	triggerMenu   func(geometry.Point) bool
 	wrapSelection bool
@@ -324,32 +417,51 @@ func (p *choicePanelKeys) Event(ctx widget.Context, e event.Event) bool {
 			return true
 		}
 		if p.menu != nil && bounds.Contains(mouse.GlobalPosition) {
-			i := int((mouse.GlobalPosition.Y - bounds.Min.Y + p.scroll.Get()) / p.rowHeight)
-			if p.menu(i, mouse.GlobalPosition) {
-				return true
+			y := mouse.GlobalPosition.Y - bounds.Min.Y + p.scroll.Get()
+			for i := range p.list.GetItemCount() {
+				y -= p.heightAt(i)
+				if y < 0 {
+					return p.menu(i, mouse.GlobalPosition)
+				}
 			}
 		}
 	}
 	if key, ok := e.(*event.KeyEvent); ok && p.menu != nil && ctx.IsFocused(p.list) && isContextMenuKey(key) {
-		y := bounds.Min.Y + float32(p.selection.Get()+1)*p.rowHeight - p.scroll.Get()
-		return p.menu(p.selection.Get(), geometry.Pt(bounds.Min.X, max(bounds.Min.Y, min(y, bounds.Max.Y))))
+		selected := p.selection.Get()
+		if selected >= 0 && selected < p.list.GetItemCount() {
+			y := bounds.Min.Y - p.scroll.Get()
+			for i := range selected + 1 {
+				y += p.heightAt(i)
+			}
+			return p.menu(selected, geometry.Pt(bounds.Min.X, max(bounds.Min.Y, min(y, bounds.Max.Y))))
+		}
 	}
 	if key, ok := e.(*event.KeyEvent); ok && key.KeyType != event.KeyRelease &&
-		ctx.IsFocused(p.focus) && p.list.GetItemCount() > 0 {
+		(ctx.IsFocused(p.focus) || p.wrapSelection && ctx.IsFocused(p.list)) && p.list.GetItemCount() > 0 {
 		delta := 0
 		switch key.Key {
 		case event.KeyDown:
 			delta = 1
 		case event.KeyUp:
 			delta = -1
+		case event.KeyEnter, event.KeySpace:
+			if p.wrapSelection && ctx.IsFocused(p.list) {
+				p.choose(p.selection.Get())
+				return true
+			}
 		}
 		if delta != 0 {
 			n := p.list.GetItemCount()
-			i := p.selection.Get() + delta
+			i := p.selection.Get()
 			if p.wrapSelection {
-				i = (i + n) % n
+				for range n {
+					i = (i + delta + n) % n
+					if !p.sectionAt(i) {
+						break
+					}
+				}
 			} else {
-				i = max(0, min(i, n-1))
+				i = max(0, min(i+delta, n-1))
 			}
 			p.selection.Set(i)
 			p.list.ScrollToIndex(i)

@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -30,11 +31,12 @@ import (
 )
 
 type preferences struct {
-	Light           bool
-	Recent          []string
-	RepositoryIcons map[string]string `json:",omitempty"`
-	Settings        viewSettings
-	Columns         columnLayout
+	Light            bool
+	Recent           []string
+	RepositoryVisits map[string]repositoryVisit `json:",omitempty"`
+	RepositoryIcons  map[string]string          `json:",omitempty"`
+	Settings         viewSettings
+	Columns          columnLayout
 }
 
 func configPath() string {
@@ -186,7 +188,7 @@ func main() {
 	w.host.SetHitTestCallback(w.hitTestWindow)
 	shortcuts := w.ui.Window().FocusManager()
 	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyF, Ctrl: true}, w.showSearch)
-	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyO, Ctrl: true}, func() { w.show("open") })
+	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyO, Ctrl: true}, w.showRepositoryPicker)
 	shortcuts.RegisterShortcut(focus.Shortcut{Key: event.KeyF5}, func() {
 		if w.path != "" && !w.busy {
 			w.refresh(w.filter)
@@ -219,9 +221,9 @@ func main() {
 		if err == nil {
 			w.drafts["openPath"] = cwd
 			if root, err := repo.Root(ctx, cwd); err == nil {
-				paths = []string{root}
+				w.openRepository(root, false)
 			} else if len(w.prefs.Recent) > 0 {
-				paths = []string{w.prefs.Recent[0]}
+				w.openRepository(w.prefs.Recent[0], false)
 			}
 		}
 	}
@@ -270,6 +272,10 @@ func (w *workbench) show(page string) {
 
 // The event loop owns the model and widgets. Workers return a completion to it.
 func (w *workbench) job(label string, work func(context.Context) (func(), error)) {
+	w.jobWithError(label, work, w.showError)
+}
+
+func (w *workbench) jobWithError(label string, work func(context.Context) (func(), error), onError func(error)) {
 	if w.busy {
 		return
 	}
@@ -282,7 +288,7 @@ func (w *workbench) job(label string, work func(context.Context) (func(), error)
 		w.status = ""
 		if err != nil {
 			w.status = err.Error()
-			w.showError(err)
+			onError(err)
 		} else if apply != nil {
 			apply()
 		}
@@ -322,11 +328,7 @@ func (w *workbench) discover(paths []string) {
 			return nil, fmt.Errorf("%s", strings.Join(problems, "\n"))
 		}
 		return func() {
-			for _, r := range roots {
-				if !slices.Contains(w.prefs.Recent, r) {
-					w.prefs.Recent = append(w.prefs.Recent, r)
-				}
-			}
+			w.prefs.rememberRepositories(roots)
 			w.open(roots[0])
 			if len(problems) > 0 {
 				w.showError(fmt.Errorf("%s", strings.Join(problems, "\n")))
@@ -335,35 +337,47 @@ func (w *workbench) discover(paths []string) {
 	})
 }
 func (w *workbench) open(path string) {
+	w.openRepository(path, true)
+}
+
+func (w *workbench) openRepository(path string, visit bool) {
 	if w.busy {
 		return
 	}
-	f := w.prefs.Settings.historyFilter()
-	iconPath := w.prefs.RepositoryIcons[repositoryKey(path)]
+	filter, icons := w.prefs.Settings.historyFilter(), maps.Clone(w.prefs.RepositoryIcons)
 	w.job("Read repository", func(ctx context.Context) (func(), error) {
-		data, err := repo.Load(ctx, path, f)
-		if err != nil {
-			return nil, err
-		}
-		thumbnail := resolveRepositoryIcon(path, iconPath)
-		return func() {
-			w.path, w.filter, w.data = path, f, data
-			w.repositoryIcon = thumbnail
-			w.closePreview()
-			w.search = ""
-			w.table = nil
-			w.page = "history"
-			w.inlineClosed = false
-			w.amend = false
-			w.form = nil
-			w.file = nil
-			w.commit = repo.Commit{}
-			w.prefs.Recent = append([]string{path}, slices.DeleteFunc(w.prefs.Recent, func(p string) bool { return sameRepositoryPath(p, path) })...)
-			w.prefs.save(w.settingsPath)
-			w.filterRows()
-			w.scheduleAutoRefresh()
-		}, nil
+		return w.readRepository(ctx, []string{path}, filter, icons, visit)
 	})
+}
+
+func (w *workbench) readRepository(ctx context.Context, paths []string, filter repo.Filter, icons map[string]string, visit bool) (func(), error) {
+	path := paths[0]
+	data, err := repo.Load(ctx, path, filter)
+	if err != nil {
+		return nil, err
+	}
+	thumbnail := resolveRepositoryIcon(path, icons[repositoryKey(path)])
+	return func() {
+		w.path, w.filter, w.data = path, filter, data
+		w.repositoryIcon = thumbnail
+		w.closePreview()
+		w.search = ""
+		w.table = nil
+		w.page = "history"
+		w.inlineClosed = false
+		w.amend = false
+		w.form = nil
+		w.file = nil
+		w.commit = repo.Commit{}
+		w.prefs.rememberRepositories(paths)
+		w.prefs.Recent = append([]string{path}, slices.DeleteFunc(w.prefs.Recent, func(p string) bool { return sameRepositoryPath(p, path) })...)
+		if visit {
+			w.prefs.recordRepositoryVisit(path, time.Now())
+		}
+		w.prefs.save(w.settingsPath)
+		w.filterRows()
+		w.scheduleAutoRefresh()
+	}, nil
 }
 func (w *workbench) refresh(f repo.Filter) {
 	path := w.path
