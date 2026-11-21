@@ -14,11 +14,14 @@ import (
 )
 
 func (w *workbench) stashesPanel() (widget.Widget, widget.Widget) {
-	newStash := w.btn("Stash changes…", button.TextOnly, w.data.Head != "" && len(w.data.Files) > 0, func() {
+	newStash := w.dropdownActionButton(stashChangesIcon, "Stash changes…", w.data.Head != "" && len(w.data.Files) > 0, func() {
 		w.selectPopupAction(w.stashCreateForm)
 	})
 	if len(w.data.Stashes) == 0 {
-		panel := primitives.VBox(w.muted("No saved stashes"), newStash).Width(300).Padding(8).Gap(6)
+		panel := primitives.VBox(
+			primitives.VBox(w.muted("No saved stashes")).PaddingXY(12, 10),
+			w.dropdownFooter(newStash),
+		).Width(300).CrossAlign(primitives.CrossAxisStretch)
 		return panel, nil
 	}
 	choices := make([]popupChoice, 0, len(w.data.Stashes))

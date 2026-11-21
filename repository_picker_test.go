@@ -87,12 +87,63 @@ func TestRepositoryPickerBrowsesAddsAndInitializes(t *testing.T) {
 			}
 		})
 	}
-	if search == nil || add == nil || menu == nil || add.ScreenBounds().Min.Y < search.ScreenBounds().Max.Y ||
-		add.ScreenBounds().Max.Y > menu.list.ScreenBounds().Min.Y {
-		t.Fatal("add button should sit between the filter and repository list")
+	if search == nil || add == nil || menu == nil || add.ScreenBounds().Min.Y < menu.list.ScreenBounds().Max.Y ||
+		search.ScreenBounds().Max.Y > menu.list.ScreenBounds().Min.Y {
+		t.Fatal("add button should sit in the sticky footer below the repository list")
 	}
 	if menu.list.GetItemCount() != 2 || menu.selection.Get() != 1 || !menu.sectionAt(0) {
 		t.Fatal("recent group should have a heading and highlight its first repository")
+	}
+	var check *icon.IconWidget
+	var badge *repositoryBadge
+	walkWidgets(menu.list, func(node widget.Widget) {
+		switch v := node.(type) {
+		case *icon.IconWidget:
+			if v.Data().Name == icon.Check.Name {
+				check = v
+			}
+		case *repositoryBadge:
+			badge = v
+		}
+	})
+	if check == nil || badge == nil {
+		t.Fatal("current repository should show a badge and checkmark")
+	}
+	checkBounds := check.ScreenBounds()
+	if checkBounds.Width() != 14 || checkBounds.Height() != 14 || checkBounds.Center().Y != badge.ScreenBounds().Center().Y {
+		t.Errorf("checkmark bounds %v should be 14×14 and centered with badge %v", checkBounds, badge.ScreenBounds())
+	}
+	// Verify no-match filtering sets error state, clears selection, ignores navigation, and clear button restores rows.
+	for _, ch := range "zzz" {
+		win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyUnknown, ch, event.ModNone))
+	}
+	canvas := &uitest.MockCanvas{}
+	w.ui.Frame()
+	win.DrawOverlays(canvas)
+	key(event.KeyDown, event.ModNone)
+	key(event.KeyUp, event.ModNone)
+	key(event.KeyEnter, event.ModNone)
+	if menu.selection.Get() != -1 || w.popupAction != nil {
+		t.Fatalf("no-match filter should have selection -1 and ignore Enter, got %d", menu.selection.Get())
+	}
+	if !slices.ContainsFunc(canvas.Texts, func(call uitest.DrawTextCall) bool { return call.Text == "zzz" && call.Color == w.theme.Colors.Error }) {
+		t.Error("no-match repository search should render in error color")
+	}
+	var clearBtn *button.Widget
+	for _, overlay := range win.OverlayContentWidgets() {
+		walkWidgets(overlay, func(node widget.Widget) {
+			if b, ok := node.(*button.Widget); ok && b != add {
+				clearBtn = b
+			}
+		})
+	}
+	if clearBtn == nil {
+		t.Fatal("repository search should show a clear button when non-empty")
+	}
+	testClick(w, clearBtn.ScreenBounds().Center())
+	paintOverlays()
+	if search.Text() != "" || menu.list.GetItemCount() != 2 || menu.selection.Get() != 1 {
+		t.Fatalf("clearing repository search gave text %q, count %d, selection %d", search.Text(), menu.list.GetItemCount(), menu.selection.Get())
 	}
 	testClick(w, add.ScreenBounds().Center())
 	testApplyPopupAction(t, w)

@@ -7,7 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/listview"
 	"github.com/gogpu/ui/core/popover"
 	"github.com/gogpu/ui/core/toolbar"
@@ -89,7 +88,7 @@ func (w *workbench) openAnchoredPopup(trigger popupAnchor, id string, anchor fun
 		popover.AnchorBounds(anchor),
 		popover.Content(content),
 		popover.PlacementOpt(placement),
-		popover.PainterOpt(w.paint.Popover),
+		popover.PainterOpt(dropdownPopoverPainter{w.paint.Popover}),
 		popover.OnHide(func() {
 			if w.repoSearchCancel != nil {
 				w.repoSearchCancel()
@@ -143,9 +142,13 @@ type popupChoice struct {
 	current     bool
 	recent      bool
 	section     bool
+	status      bool
+	empty       bool
 	action      func()
 	contextMenu func(geometry.Point)
 }
+
+func (c popupChoice) selectable() bool { return !c.section && !c.status && !c.empty }
 
 func (w *workbench) repositoriesPopup(bar *toolbarHints, index int) {
 	icons := newRepositoryIconGallery(w)
@@ -163,11 +166,10 @@ func (w *workbench) repositoriesPopup(bar *toolbarHints, index int) {
 	recent, others := w.prefs.repositoryGroups(time.Now())
 	appendChoices(recent, true)
 	appendChoices(others, false)
-	add := w.btn("+ Add repository", button.TextOnly, true, func() {
+	add := w.dropdownActionButton(icon.Add, "Add repository…", true, func() {
 		w.selectPopupAction(w.showRepositoryPicker)
 	})
-	beforeList := primitives.VBox(row(add), line(w)).CrossAlign(primitives.CrossAxisStretch)
-	content, focus := w.searchChoicePanel(400, 42, "Search repositories or paste a path", choices, w.repositorySearch(icons), beforeList)
+	content, focus := w.searchChoicePanel(380, 44, "Search repositories or paste a path", choices, w.repositorySearch(icons), add)
 	content.triggerMenu = w.repositoryTriggerMenu
 	w.openToolbarPopup(bar, index, popover.BottomStart, content, focus)
 }
@@ -204,40 +206,62 @@ func (w *workbench) remotesPopup(bar *toolbarHints, index int) {
 }
 
 func (w *workbench) choicePanel(width, rowHeight float32, placeholder string, choices []popupChoice, footer ...widget.Widget) (widget.Widget, widget.Widget) {
-	return w.searchChoicePanel(width, rowHeight, placeholder, choices, nil, nil, footer...)
+	return w.searchChoicePanel(width, rowHeight, placeholder, choices, nil, footer...)
 }
 
-func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder string, choices []popupChoice, search func(string, func([]popupChoice)), beforeList widget.Widget, footer ...widget.Widget) (*choicePanelKeys, widget.Widget) {
+func firstSelectableChoice(choices []popupChoice) int {
+	return slices.IndexFunc(choices, popupChoice.selectable)
+}
+
+func initialChoiceSelection(choices []popupChoice) int {
+	for i, choice := range choices {
+		if choice.current && choice.selectable() {
+			return i
+		}
+	}
+	return firstSelectableChoice(choices)
+}
+
+func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder string, choices []popupChoice, search func(string, func([]popupChoice)), footer ...widget.Widget) (*choicePanelKeys, widget.Widget) {
 	matches := choices
-	selection := state.NewSignal(0)
 	if search != nil {
 		matches = repositoryMenuRows(choices)
 		if len(matches) == 0 {
-			matches = []popupChoice{{label: "No repositories"}}
-		}
-		if matches[0].section {
-			selection.Set(1)
-		}
-	} else {
-		for i, choice := range choices {
-			if choice.current {
-				selection.Set(i)
-				break
-			}
+			matches = []popupChoice{{label: "No repositories", empty: true}}
 		}
 	}
+	selection := state.NewSignal(initialChoiceSelection(matches))
 	scroll := state.NewSignal(float32(0))
+	var needle string
+	selectableAt := func(index int) bool {
+		return index >= 0 && index < len(matches) && matches[index].selectable()
+	}
+	isInvalid := func() bool {
+		if needle == "" {
+			return false
+		}
+		for _, choice := range matches {
+			if choice.selectable() || choice.status {
+				return false
+			}
+		}
+		return true
+	}
 	choose := func(index int) {
 		if index >= 0 && index < len(matches) && matches[index].action != nil {
 			w.selectPopupAction(matches[index].action)
 		}
 	}
 	heightAt := func(index int) float32 {
-		if matches[index].section {
-			if matches[index].label == "" {
-				return 7
+		choice := matches[index]
+		if choice.section {
+			if choice.label == "" {
+				return dropdownSeparatorHeight
 			}
-			return 22
+			return dropdownHeadingHeight
+		}
+		if choice.status || choice.empty {
+			return 32
 		}
 		return rowHeight
 	}
@@ -254,29 +278,42 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 		selectionOption,
 		listview.ScrollYSignal(scroll),
 		listview.OnItemClick(choose),
-		listview.PainterOpt(w.paint.ListView),
+		listview.PainterOpt(dropdownListPainter{ListViewPainter: w.paint.ListView, selectable: selectableAt}),
 		listview.BuildItem(func(item listview.ItemContext) widget.Widget {
 			choice := matches[item.Index]
 			if choice.section {
 				if choice.label == "" {
-					return primitives.VBox(line(w)).PaddingXY(0, 3)
+					return dropdownSeparator(w)
 				}
-				return primitives.VBox(w.muted(choice.label).FontSize(11)).PaddingXY(8, 2)
+				return primitives.VBox(w.muted(choice.label).FontSize(11).Bold()).
+					Height(dropdownHeadingHeight).PaddingTop(8).PaddingBottom(4).PaddingLeft(8).PaddingRight(8)
+			}
+			if choice.status || choice.empty {
+				return primitives.VBox(w.muted(choice.label)).Height(32).PaddingXY(8, 7)
 			}
 			label := w.text(choice.label).MaxLines(1).Ellipsis()
 			if choice.action == nil {
 				label.Color(w.theme.Colors.OnSurfaceDisabled)
 			}
-			if choice.current {
+			if choice.current && choice.leading == nil {
 				label.Bold()
 			}
 			content := []widget.Widget{label}
 			if choice.detail != "" {
 				content = append(content, w.muted(choice.detail).FontSize(11).MaxLines(1).Ellipsis())
 			}
-			text := primitives.VBox(content...)
+			text := primitives.VBox(content...).Gap(1)
 			if choice.leading != nil {
-				return row(choice.leading(), primitives.Expanded(text)).Gap(8).PaddingXY(8, 3)
+				items := []widget.Widget{choice.leading(), primitives.Expanded(text)}
+				if choice.current {
+					checkColor := w.theme.Colors.Primary
+					if item.Selected {
+						checkColor = w.theme.Colors.OnSurface
+					}
+					check := icon.NewIcon(icon.Check, icon.Size(14), icon.Color(checkColor))
+					items = append(items, primitives.VBox(check).Width(14).Height(14))
+				}
+				return row(items...).Gap(10).Height(rowHeight).PaddingXY(8, 0)
 			}
 			if choice.glyph.Name != "" {
 				color := w.theme.Colors.OnSurfaceSecondary
@@ -284,12 +321,12 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 					color = w.theme.Colors.OnSurfaceDisabled
 				}
 				return row(icon.NewIcon(choice.glyph, icon.Size(14), icon.Color(color)),
-					primitives.Expanded(text)).PaddingXY(6, 3)
+					primitives.Expanded(text)).Gap(8).Height(rowHeight).PaddingXY(8, 0)
 			}
-			return text.PaddingXY(8, 4)
+			return row(primitives.Expanded(text)).Height(rowHeight).PaddingXY(8, 0)
 		}),
 	)
-	panel := primitives.VBox().Width(width).Padding(8).Gap(6)
+	panel := primitives.VBox().Width(width).CrossAlign(primitives.CrossAxisStretch)
 	visibleHeight := func() float32 {
 		var height float32
 		for i := range min(8, len(matches)) {
@@ -300,23 +337,27 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 		}
 		return height
 	}
-	listBox := primitives.VBox(list).Height(visibleHeight())
+	listBox := primitives.VBox(list).Height(visibleHeight()).CrossAlign(primitives.CrossAxisStretch)
+	var input widget.Widget
 	refresh := func() {
 		if search != nil {
 			listBox.Height(visibleHeight())
 			listBox.MarkNeedsLayout()
+		}
+		if input != nil {
+			widget.MarkRedrawInTree(input)
 		}
 		list.InvalidateData()
 		w.ui.Window().Context().Invalidate()
 	}
 	var focus widget.Widget = list
 	if placeholder != "" {
-		input := w.input(placeholder, "", func(query string) {
-			needle := strings.TrimSpace(query)
+		filterBox, field := w.newFilterInput(placeholder, isInvalid, func(query string) {
+			q := strings.TrimSpace(query)
 			if search != nil {
-				needle = repositoryQuery(query)
+				q = repositoryQuery(query)
 			}
-			needle = strings.ToLower(needle)
+			needle = strings.ToLower(q)
 			filterChoices := func(resolved string) []popupChoice {
 				var filtered []popupChoice
 				for _, choice := range choices {
@@ -336,14 +377,10 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 					if needle == "" {
 						label = "No repositories"
 					}
-					matches = []popupChoice{{label: label}}
+					matches = []popupChoice{{label: label, empty: true}}
 				}
 			}
-			first := 0
-			if len(matches) > 0 && matches[0].section {
-				first = 1
-			}
-			selection.Set(first)
+			selection.Set(firstSelectableChoice(matches))
 			scroll.Set(0)
 			refresh()
 			if search != nil {
@@ -365,28 +402,29 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 						selection.Set(slices.IndexFunc(matches, func(choice popupChoice) bool {
 							return sameRepositoryPath(choice.detail, resolved)
 						}))
+					} else {
+						selection.Set(firstSelectableChoice(matches))
 					}
 					refresh()
-					if resolved != "" {
-						list.ScrollToIndex(selection.Get())
+					if sel := selection.Get(); resolved != "" && sel >= 0 {
+						list.ScrollToIndex(sel)
 					}
 				})
 			}
 		}, func(string) { choose(selection.Get()) })
-		panel.AddChild(compactInput(input))
-		focus = input
-	}
-	if beforeList != nil {
-		panel.AddChild(beforeList)
+		panel.AddChild(filterBox)
+		input = field
+		focus = field
 	}
 	if len(choices) > 0 || placeholder == "" || search != nil {
-		panel.AddChild(listBox)
+		panel.AddChild(primitives.VBox(listBox).Padding(dropdownListPadding).CrossAlign(primitives.CrossAxisStretch))
 	}
-	for _, child := range footer {
-		panel.AddChild(child)
+	if len(footer) > 0 {
+		panel.AddChild(w.dropdownFooter(footer...))
 	}
 	return &choicePanelKeys{BoxWidget: panel, focus: focus, list: list, selection: selection, scroll: scroll, heightAt: heightAt, wrapSelection: search != nil,
-		choose: choose, sectionAt: func(i int) bool { return matches[i].section },
+		choose: choose, sectionAt: func(i int) bool { return i >= 0 && i < len(matches) && matches[i].section },
+		selectableAt: selectableAt,
 		menu: func(i int, at geometry.Point) bool {
 			if i < 0 || i >= len(matches) || matches[i].contextMenu == nil {
 				return false
@@ -405,6 +443,7 @@ type choicePanelKeys struct {
 	heightAt      func(int) float32
 	choose        func(int)
 	sectionAt     func(int) bool
+	selectableAt  func(int) bool
 	menu          func(int, geometry.Point) bool
 	triggerMenu   func(geometry.Point) bool
 	wrapSelection bool
@@ -453,12 +492,33 @@ func (p *choicePanelKeys) Event(ctx widget.Context, e event.Event) bool {
 		if delta != 0 {
 			n := p.list.GetItemCount()
 			i := p.selection.Get()
+			canSelect := func(idx int) bool {
+				if p.selectableAt != nil {
+					return p.selectableAt(idx)
+				}
+				if p.sectionAt != nil {
+					return !p.sectionAt(idx)
+				}
+				return true
+			}
 			if p.wrapSelection {
+				if i < 0 {
+					if delta > 0 {
+						i = -1
+					} else {
+						i = 0
+					}
+				}
+				found := false
 				for range n {
 					i = (i + delta + n) % n
-					if !p.sectionAt(i) {
+					if canSelect(i) {
+						found = true
 						break
 					}
+				}
+				if !found {
+					return true
 				}
 			} else {
 				i = max(0, min(i+delta, n-1))

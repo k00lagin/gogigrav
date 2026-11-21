@@ -115,7 +115,7 @@ func (w *workbench) repositorySearch(icons *repositoryIconGallery) func(string, 
 		ctx, cancel := context.WithCancel(w.ctx)
 		w.repoSearchCancel = cancel
 		current := func() bool { return ctx.Err() == nil && popup != nil && w.openPopup == popup }
-		publish([]popupChoice{{label: "Checking repository…"}})
+		publish([]popupChoice{{label: "Checking repository…", status: true}})
 		w.runJob(func(_ context.Context) (func(), error) {
 			timer := time.NewTimer(150 * time.Millisecond)
 			defer timer.Stop()
@@ -134,17 +134,22 @@ func (w *workbench) repositorySearch(icons *repositoryIconGallery) func(string, 
 					if !known {
 						label = "Add " + label
 					}
-					choice := popupChoice{label: label, detail: root, glyph: icon.ExpFolder, current: root == w.path, action: func() { w.open(root) }}
-					choice.leading = func() widget.Widget { return icons.repository(root) }
+					choice := popupChoice{label: label, detail: root, glyph: icon.ExpFolder, current: sameRepositoryPath(root, w.path), action: func() { w.open(root) }}
 					if known {
+						choice.leading = func() widget.Widget { return icons.repository(root) }
 						choice.contextMenu = func(at geometry.Point) { w.repositoryMenu(root, at) }
+					} else {
+						choice.leading = func() widget.Widget {
+							return row(icon.NewIcon(icon.Add, icon.Size(14), icon.Color(w.theme.Colors.OnSurfaceSecondary)),
+								icons.repository(root)).Gap(6)
+						}
 					}
 					publish([]popupChoice{choice})
 				}, nil
 			}
 			entries, err := os.ReadDir(path)
 			if err != nil {
-				return func() { publish([]popupChoice{{label: "No Git repository at this path", detail: path}}) }, nil
+				return func() { publish([]popupChoice{{label: "No Git repository at this path", empty: true}}) }, nil
 			}
 			return func() {
 				init := popupChoice{label: "Initialize " + filepath.Base(path), detail: path, glyph: icon.Add, action: func() {
@@ -171,7 +176,7 @@ func (w *workbench) repositorySearch(icons *repositoryIconGallery) func(string, 
 }
 
 func (w *workbench) searchGitHubRepositories(ctx context.Context, path, name string, current func() bool, publish func([]popupChoice), init popupChoice) {
-	publish([]popupChoice{init, {label: "Looking for " + name + " on GitHub…"}})
+	publish([]popupChoice{init, {label: "Looking for " + name + " on GitHub…", status: true}})
 	w.runJob(func(_ context.Context) (func(), error) {
 		lookup, cancel := context.WithTimeout(ctx, 12*time.Second)
 		defer cancel()

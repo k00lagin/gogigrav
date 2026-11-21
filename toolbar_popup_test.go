@@ -6,6 +6,7 @@ import (
 	"github.com/gogpu/gogpu"
 	"github.com/gogpu/ui/app"
 	"github.com/gogpu/ui/compositor"
+	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/popover"
 	"github.com/gogpu/ui/core/textfield"
 	"github.com/gogpu/ui/core/toolbar"
@@ -15,6 +16,7 @@ import (
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/uitest"
+	"github.com/gogpu/ui/widget"
 )
 
 func TestToolbarPopup_SearchAndSelect(t *testing.T) {
@@ -47,8 +49,8 @@ func TestToolbarPopup_SearchAndSelect(t *testing.T) {
 	if !ok || field.Bounds().IsEmpty() {
 		t.Fatal("search field should be laid out and focused on open")
 	}
-	if height := field.Bounds().Height(); height != 32 {
-		t.Fatalf("search field height = %v, want 32", height)
+	if height := field.Bounds().Height(); height != dropdownFilterHeight {
+		t.Fatalf("search field height = %v, want %v", height, dropdownFilterHeight)
 	}
 	for _, char := range "FEATURE" {
 		win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyUnknown, char, event.ModNone))
@@ -94,7 +96,7 @@ func TestToolbarPopup_SearchAndSelect(t *testing.T) {
 	}
 	rows := paintRows()
 	for i, origin := range rows {
-		want := popupBounds.Min.Add(geometry.Pt(8, 8+field.Bounds().Height()+6+float32(i)*28))
+		want := popupBounds.Min.Add(geometry.Pt(dropdownListPadding, dropdownFilterHeight+1+dropdownListPadding+float32(i)*28))
 		if origin != want {
 			t.Errorf("row %d origin = %v, want %v", i, origin, want)
 		}
@@ -102,7 +104,7 @@ func TestToolbarPopup_SearchAndSelect(t *testing.T) {
 	if len(rows) != 2 {
 		t.Errorf("compositor recorded %d filtered rows, want 2", len(rows))
 	}
-	if origin := field.ScreenBounds().Min; origin != popupBounds.Min.Add(geometry.Pt(8, 8)) {
+	if origin := field.ScreenBounds().Min; origin != popupBounds.Min.Add(geometry.Pt(12+14+8, 0)) {
 		t.Errorf("search field origin = %v, popup starts at %v", origin, popupBounds.Min)
 	}
 	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyUnknown, '!', event.ModNone))
@@ -110,7 +112,44 @@ func TestToolbarPopup_SearchAndSelect(t *testing.T) {
 	if got := len(paintRows()); got != 0 {
 		t.Errorf("compositor kept %d rows after filtering to zero matches", got)
 	}
-	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyBackspace, 0, event.ModNone))
+	canvas := &uitest.MockCanvas{}
+	win.DrawOverlays(canvas)
+	var sawError bool
+	for _, call := range canvas.Texts {
+		if call.Text == "FEATURE!" && call.Color == w.theme.Colors.Error {
+			sawError = true
+		}
+	}
+	if !sawError {
+		t.Error("no-match search query should render in error color")
+	}
+	var clearBtn *button.Widget
+	walkWidgets(overlays[0], func(node widget.Widget) {
+		if b, ok := node.(*button.Widget); ok {
+			clearBtn = b
+		}
+	})
+	if clearBtn == nil {
+		t.Fatal("clear button should appear when search is non-empty")
+	}
+	testClick(w, clearBtn.ScreenBounds().Center())
+	w.ui.Frame()
+	if field.Text() != "" || win.Context().FocusedWidget() != field {
+		t.Fatalf("clear button left text %q and focus %T", field.Text(), win.Context().FocusedWidget())
+	}
+	clearBtn = nil
+	walkWidgets(overlays[0], func(node widget.Widget) {
+		if b, ok := node.(*button.Widget); ok {
+			clearBtn = b
+		}
+	})
+	if clearBtn != nil {
+		t.Fatal("clear button should hide after clearing search")
+	}
+	for _, char := range "FEATURE" {
+		win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyUnknown, char, event.ModNone))
+		win.HandleEvent(event.NewKeyEvent(event.KeyRelease, event.KeyUnknown, char, event.ModNone))
+	}
 	w.ui.Frame()
 	if got := len(paintRows()); got != 2 {
 		t.Errorf("compositor restored %d rows, want 2", got)

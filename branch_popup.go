@@ -2,6 +2,7 @@ package main
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/gogpu/ui/core/button"
@@ -19,7 +20,7 @@ import (
 )
 
 const (
-	branchRowHeight         = 26
+	branchRowHeight         = 28
 	branchViewportMaxHeight = 12 * branchRowHeight
 )
 
@@ -32,6 +33,7 @@ func (w *workbench) branchPanel() (widget.Widget, widget.Widget) {
 	filter := w.filter
 	ctx := w.ui.Window().Context()
 	scroll := state.NewSignal(float32(0))
+	currentBranch := w.data.CurrentBranch()
 	var query, firstLocal, firstRemote string
 	toggle := func(ref string, checked bool) {
 		if checked {
@@ -41,22 +43,23 @@ func (w *workbench) branchPanel() (widget.Widget, widget.Widget) {
 		}
 		w.refreshBranchHistory(filter)
 	}
-	check := func(label string, checked func() bool, onToggle func(bool)) *checkbox.Widget {
+	check := func(label string, bold bool, checked func() bool, onToggle func(bool)) *checkbox.Widget {
 		return checkbox.New(checkbox.Label(label), checkbox.CheckedFn(checked), checkbox.OnToggle(onToggle),
-			checkbox.PainterOpt(w.paint.Checkbox))
+			checkbox.PainterOpt(branchCheckboxPainter{CheckboxPainter: w.paint.Checkbox, bold: bold}))
 	}
-	all := check("All branches", func() bool { return len(filter.VisibleRefs()) == 0 }, func(checked bool) {
+	all := check("All branches", false, func() bool { return len(filter.VisibleRefs()) == 0 }, func(checked bool) {
 		if checked {
 			filter.Refs = nil
 			w.refreshBranchHistory(filter)
 			ctx.Invalidate()
 		}
 	})
-	leaf := func(label, ref string) widget.Widget {
-		return primitives.VBox(check(label, func() bool { return slices.Contains(filter.Refs, ref) },
-			func(checked bool) { toggle(ref, checked); all.SetNeedsRedraw(true) })).Height(branchRowHeight)
+	leaf := func(label, ref string, bold bool) widget.Widget {
+		cb := check(label, bold, func() bool { return slices.Contains(filter.Refs, ref) },
+			func(checked bool) { toggle(ref, checked); all.SetNeedsRedraw(true) })
+		return primitives.VBox(primitives.Expanded(cb)).Height(branchRowHeight).CrossAlign(primitives.CrossAxisStretch)
 	}
-	branchRows := func(refs []string, prefix string) ([]widget.Widget, string) {
+	branchRows := func(refs []string, prefix string, isLocal bool) ([]widget.Widget, string) {
 		var rows []widget.Widget
 		var first string
 		for _, ref := range refs {
@@ -65,13 +68,15 @@ func (w *workbench) branchPanel() (widget.Widget, widget.Widget) {
 				if first == "" {
 					first = ref
 				}
-				rows = append(rows, leaf(strings.TrimPrefix(name, prefix), ref))
+				rows = append(rows, leaf(strings.TrimPrefix(name, prefix), ref, isLocal && name == currentBranch))
 			}
 		}
 		return rows, first
 	}
 
-	localSlot, allSlot, emptySlot := primitives.VBox(), primitives.VBox(), primitives.VBox()
+	localSlot := primitives.VBox().CrossAlign(primitives.CrossAxisStretch)
+	allSlot := primitives.VBox().CrossAlign(primitives.CrossAxisStretch)
+	emptySlot := primitives.VBox().CrossAlign(primitives.CrossAxisStretch)
 	local := w.newBranchGroup("Local", "refs/heads", false)
 	remote := w.newBranchGroup("Remote", "refs/remotes", false)
 	remoteGroups := make(map[string]*branchGroup)
@@ -93,12 +98,13 @@ func (w *workbench) branchPanel() (widget.Widget, widget.Widget) {
 	rebuildLocal := func() {
 		allSlot.ClearChildren()
 		if query == "" {
-			allSlot.AddChild(primitives.VBox(all).Height(branchRowHeight).PaddingLeft(5))
+			allSlot.AddChild(primitives.VBox(primitives.Expanded(all)).Height(branchRowHeight).CrossAlign(primitives.CrossAxisStretch))
+			allSlot.AddChild(dropdownSeparator(w))
 		}
-		children, first := branchRows(localRefs, "")
+		children, first := branchRows(localRefs, "", true)
 		firstLocal = first
 		localSlot.ClearChildren()
-		local.setChildren(children, query != "")
+		local.setChildren(children, len(children), query != "")
 		if len(children) != 0 || query == "" {
 			localSlot.AddChild(local.box)
 		}
@@ -106,25 +112,31 @@ func (w *workbench) branchPanel() (widget.Widget, widget.Widget) {
 	rebuildRemote := func() {
 		firstRemote = ""
 		var groups []widget.Widget
+		remoteCount := 0
 		if filter.Remote {
 			for _, name := range remoteNames {
-				children, first := branchRows(remoteRefs[name], name+"/")
+				children, first := branchRows(remoteRefs[name], name+"/", false)
 				if first != "" {
 					if firstRemote == "" {
 						firstRemote = first
 					}
+					remoteCount += len(children)
 					group := remoteGroups[name]
-					group.setChildren(children, query != "")
+					group.setChildren(children, len(children), query != "")
 					groups = append(groups, group.box)
 				}
 			}
 		}
-		remote.setChildren(groups, query != "")
+		remote.setChildren(groups, remoteCount, query != "")
 	}
 	updateEmpty := func() {
 		emptySlot.ClearChildren()
 		if firstLocal == "" && firstRemote == "" {
-			emptySlot.AddChild(primitives.VBox(w.muted("No items")).Height(branchRowHeight).PaddingXY(6, 4))
+			label := "No branches"
+			if query != "" {
+				label = "No matching branches"
+			}
+			emptySlot.AddChild(primitives.VBox(w.muted(label)).Height(branchRowHeight).PaddingXY(8, 5))
 		}
 	}
 	rebuild := func() {
@@ -132,17 +144,8 @@ func (w *workbench) branchPanel() (widget.Widget, widget.Widget) {
 		rebuildRemote()
 		updateEmpty()
 	}
-	remote.header.AddChild(toggleswitch.New(toggleswitch.CheckedFn(func() bool { return filter.Remote }),
-		toggleswitch.A11yHint("Show remote branches in the branch list and history"), toggleswitch.PainterOpt(w.paint.Switch),
-		toggleswitch.OnToggle(func(checked bool) {
-			filter.Remote = checked
-			rebuildRemote()
-			updateEmpty()
-			all.SetNeedsRedraw(true)
-			w.refreshBranchHistory(filter)
-			ctx.Invalidate()
-		})).Padding(0))
-	in := w.input("Search branches", "", func(text string) {
+	isInvalid := func() bool { return query != "" && firstLocal == "" && firstRemote == "" }
+	filterBox, in := w.newFilterInput("Search branches", isInvalid, func(text string) {
 		query = strings.ToLower(strings.TrimSpace(text))
 		scroll.Set(0)
 		rebuild()
@@ -157,13 +160,28 @@ func (w *workbench) branchPanel() (widget.Widget, widget.Widget) {
 			ctx.Invalidate()
 		}
 	})
+	remote.header.Gap(4).PaddingRight(4)
+	remote.header.AddChild(toggleswitch.New(toggleswitch.CheckedFn(func() bool { return filter.Remote }),
+		toggleswitch.A11yHint("Show remote branches in the branch list and history"), toggleswitch.PainterOpt(w.paint.Switch),
+		toggleswitch.OnToggle(func(checked bool) {
+			filter.Remote = checked
+			rebuildRemote()
+			updateEmpty()
+			all.SetNeedsRedraw(true)
+			in.SetNeedsRedraw(true)
+			w.refreshBranchHistory(filter)
+			ctx.Invalidate()
+		})).Padding(0))
 	rebuild()
-	rows := primitives.VBox(allSlot, localSlot, remote.box, emptySlot).PaddingRight(10)
+	rows := primitives.VBox(allSlot, localSlot, remote.box, emptySlot).
+		PaddingTop(dropdownListPadding).PaddingBottom(dropdownListPadding).
+		PaddingLeft(dropdownListPadding).PaddingRight(10).
+		CrossAlign(primitives.CrossAxisStretch)
 	tree := &branchViewport{
 		Widget: scrollview.New(rows, scrollview.ScrollYSignal(scroll), scrollview.PainterOpt(w.paint.Scrollbar)),
 		scroll: scroll,
 	}
-	panel := primitives.VBox(compactInput(in), tree).Width(330).Padding(8).Gap(6)
+	panel := primitives.VBox(filterBox, tree).Width(330).CrossAlign(primitives.CrossAxisStretch)
 	return panel, in
 }
 
@@ -195,9 +213,25 @@ func (b *branchViewport) Layout(ctx widget.Context, constraints geometry.Constra
 	return b.Widget.Layout(ctx, geometry.Tight(size))
 }
 
+type branchGroupBody struct {
+	*primitives.BoxWidget
+	bench *workbench
+}
+
+func (b *branchGroupBody) Draw(ctx widget.Context, canvas widget.Canvas) {
+	if bounds := b.Bounds(); !bounds.IsEmpty() {
+		x := bounds.Min.X + 12
+		canvas.DrawLine(geometry.Pt(x, bounds.Min.Y), geometry.Pt(x, bounds.Max.Y),
+			b.bench.theme.Colors.OnSurface.WithAlpha(0.14), 1)
+	}
+	b.BoxWidget.Draw(ctx, canvas)
+}
+
 type branchGroup struct {
-	box, header, body *primitives.BoxWidget
-	collapsed         bool
+	box, header *primitives.BoxWidget
+	body        *branchGroupBody
+	collapsed   bool
+	count       int
 }
 
 type branchGroupKey struct {
@@ -205,15 +239,15 @@ type branchGroupKey struct {
 }
 
 func (w *workbench) newBranchGroup(label, ref string, folder bool) *branchGroup {
-	indent := float32(20)
-	if folder {
-		indent = 40
-	}
 	key := branchGroupKey{path: w.path, ref: ref}
+	bodyBox := primitives.VBox().PaddingLeft(18).CrossAlign(primitives.CrossAxisStretch)
+	body := &branchGroupBody{BoxWidget: bodyBox, bench: w}
+	body.SetSelf(body)
 	g := &branchGroup{
-		body: primitives.VBox().PaddingLeft(indent), collapsed: w.collapsedBranchGroups[key],
+		body: body, collapsed: w.collapsedBranchGroups[key],
 	}
 	caption := button.New(button.TextOpt(label), button.VariantOpt(button.TextOnly), button.SizeOpt(button.Small),
+		button.DisabledFn(func() bool { return g.body.ChildCount() == 0 }),
 		button.PainterOpt(branchGroupPainter{w.paint.Button, g, folder}), button.OnClick(func() {
 			if g.body.ChildCount() > 0 {
 				g.collapsed = g.expanded()
@@ -229,18 +263,20 @@ func (w *workbench) newBranchGroup(label, ref string, folder bool) *branchGroup 
 			}
 		}))
 	g.header = row(primitives.Expanded(caption)).Height(branchRowHeight)
-	g.box = primitives.VBox(g.header)
+	g.box = primitives.VBox(g.header).CrossAlign(primitives.CrossAxisStretch)
 	return g
 }
 
 func (g *branchGroup) expanded() bool { return g.box.ChildCount() > 1 }
 
-func (g *branchGroup) setChildren(children []widget.Widget, searching bool) {
+func (g *branchGroup) setChildren(children []widget.Widget, count int, searching bool) {
+	g.count = count
 	g.body.ClearChildren()
 	for _, child := range children {
 		g.body.AddChild(child)
 	}
 	g.showBody(len(children) > 0 && (searching || !g.collapsed))
+	widget.MarkRedrawInTree(g.header)
 }
 
 func (g *branchGroup) showBody(show bool) {
@@ -257,28 +293,110 @@ type branchGroupPainter struct {
 	folder bool
 }
 
+func (branchGroupPainter) ButtonHeight(button.Size) float32             { return branchRowHeight }
+func (branchGroupPainter) ButtonPadding(button.Size) (float32, float32) { return 6, 0 }
+func (branchGroupPainter) ButtonRadius() float32                        { return dropdownItemRadius }
+
 func (p branchGroupPainter) PaintButton(canvas widget.Canvas, s button.PaintState) {
-	label := s.Text
-	s.Text = ""
-	p.ButtonPainter.PaintButton(canvas, s)
-	x, y := s.Bounds.Min.X+4, s.Bounds.Center().Y
+	if s.Bounds.IsEmpty() {
+		return
+	}
 	colors := p.Theme.Colors
+	if !s.Disabled && (s.Hovered || s.Pressed) {
+		bg := colors.ControlHover
+		if s.Pressed {
+			bg = bg.Lerp(widget.ColorBlack, 0.10)
+		}
+		canvas.DrawRoundRect(s.Bounds, bg, dropdownItemRadius)
+	}
+	x, y := s.Bounds.Min.X+6, s.Bounds.Center().Y
 	if p.group.body.ChildCount() > 0 {
 		chevron := icon.ExpChevronRight
 		if p.group.expanded() {
 			chevron = icon.ExpChevronDown
 		}
-		icon.Draw(canvas, chevron, geometry.NewRect(x, y-7, 14, 14), colors.OnSurfaceSecondary)
+		icon.Draw(canvas, chevron, geometry.NewRect(x, y-6, 12, 12), colors.OnSurfaceSecondary)
 	}
-	x += 20
+	x += 18
 	if p.folder {
-		icon.Draw(canvas, icon.ExpFolder, geometry.NewRect(x, y-8, 16, 16), colors.OnSurfaceSecondary)
-		x += 22
+		icon.Draw(canvas, icon.ExpFolder, geometry.NewRect(x, y-7, 14, 14), colors.OnSurfaceSecondary)
+		x += 20
 	}
-	bounds := geometry.NewRect(x, s.Bounds.Min.Y, s.Bounds.Max.X-x, s.Bounds.Height())
+	rightEdge := s.Bounds.Max.X - 6
+	if p.group.count > 0 {
+		countText := strconv.Itoa(p.group.count)
+		countWidth := canvas.MeasureText(countText, 11, false)
+		countRect := geometry.NewRect(rightEdge-countWidth, s.Bounds.Min.Y, countWidth, s.Bounds.Height())
+		canvas.DrawText(countText, countRect, 11, colors.OnSurfaceSecondary, false, widget.TextAlignRight)
+		rightEdge -= countWidth + 8
+	}
+	bounds := geometry.NewRect(x, s.Bounds.Min.Y, max(0, rightEdge-x), s.Bounds.Height())
 	if !bounds.IsEmpty() {
 		canvas.PushClip(bounds)
-		canvas.DrawText(label, bounds, 13, colors.OnSurface, false, widget.TextAlignLeft)
+		canvas.DrawText(s.Text, bounds, 13, colors.OnSurface, !p.folder, widget.TextAlignLeft)
 		canvas.PopClip()
+	}
+}
+
+type branchCheckboxPainter struct {
+	devtools.CheckboxPainter
+	bold bool
+}
+
+func (branchCheckboxPainter) CheckboxBoxSize() float32  { return 14 }
+func (branchCheckboxPainter) CheckboxLabelGap() float32 { return 8 }
+func (branchCheckboxPainter) CheckboxFontSize() float32 { return 13 }
+
+func (p branchCheckboxPainter) PaintCheckbox(canvas widget.Canvas, s checkbox.PaintState) {
+	if s.Bounds.IsEmpty() {
+		return
+	}
+	cs := p.Theme.Colors
+	if !s.Disabled && (s.Hovered || s.Pressed) {
+		bg := cs.ControlHover
+		if s.Pressed {
+			bg = bg.Lerp(widget.ColorBlack, 0.10)
+		}
+		canvas.DrawRoundRect(s.Bounds, bg, dropdownItemRadius)
+	}
+	const boxSize float32 = 14
+	const boxRadius float32 = 3
+	boxY := s.Bounds.Min.Y + (s.Bounds.Height()-boxSize)/2
+	boxRect := geometry.NewRect(s.Bounds.Min.X+6, boxY, boxSize, boxSize)
+	if s.Checked || s.Indeterminate {
+		bg := cs.Primary
+		if s.Disabled {
+			bg = cs.ControlFill
+		}
+		canvas.DrawRoundRect(boxRect, bg, boxRadius)
+		fg := cs.OnPrimary
+		if s.Disabled {
+			fg = cs.OnSurfaceDisabled
+		}
+		cx, cy := boxRect.Min.X, boxRect.Min.Y
+		p1 := geometry.Pt(cx+boxSize*0.20, cy+boxSize*0.52)
+		p2 := geometry.Pt(cx+boxSize*0.42, cy+boxSize*0.74)
+		p3 := geometry.Pt(cx+boxSize*0.80, cy+boxSize*0.30)
+		canvas.DrawLine(p1, p2, fg, 1.5)
+		canvas.DrawLine(p2, p3, fg, 1.5)
+	} else {
+		border := cs.BorderStrong
+		if s.Disabled {
+			border = cs.OnSurfaceDisabled
+		}
+		canvas.StrokeRoundRect(boxRect.Expand(-0.75), border, boxRadius, 1.5)
+	}
+	if s.Label != "" {
+		fg := cs.OnSurface
+		if s.Disabled {
+			fg = cs.OnSurfaceDisabled
+		}
+		labelX := boxRect.Max.X + 8
+		labelRect := geometry.NewRect(labelX, s.Bounds.Min.Y, max(0, s.Bounds.Max.X-labelX-6), s.Bounds.Height())
+		if !labelRect.IsEmpty() {
+			canvas.PushClip(labelRect)
+			canvas.DrawText(s.Label, labelRect, 13, fg, p.bold, widget.TextAlignLeft)
+			canvas.PopClip()
+		}
 	}
 }

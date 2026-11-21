@@ -11,6 +11,7 @@ import (
 	"github.com/gogpu/ui/app"
 	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/checkbox"
+	"github.com/gogpu/ui/core/textfield"
 	"github.com/gogpu/ui/core/toggleswitch"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
@@ -129,8 +130,25 @@ func TestBranchPopup_ToggleAndSearch(t *testing.T) {
 			t.Errorf("label %q visible = %v, want %v", label, got, visible)
 		}
 	}
-	if draw(); len(leaves) != 3 || len(groups) != 3 || remote == nil {
+	out := draw()
+	if len(leaves) != 3 || len(groups) != 3 || remote == nil {
 		t.Fatalf("initial controls: %d checkboxes, %d groups, remote switch %v", len(leaves), len(groups), remote != nil)
+	}
+	var countLabels int
+	var boldMain bool
+	for _, call := range out.Texts {
+		if call.Text == "1" && call.Color == w.theme.Colors.OnSurfaceSecondary {
+			countLabels++
+		}
+		if call.Text == "main" && call.Bold {
+			boldMain = true
+		}
+	}
+	if countLabels != 3 {
+		t.Errorf("group count labels = %d, want 3 (Local, Remote, origin)", countLabels)
+	}
+	if !boldMain {
+		t.Error("current branch main should render bold")
 	}
 	fullHeight := height()
 	for _, group := range []struct {
@@ -169,7 +187,7 @@ func TestBranchPopup_ToggleAndSearch(t *testing.T) {
 	}
 	localBranch := leaves[1]
 	click(remote.ScreenBounds().Center())
-	out := draw()
+	out = draw()
 	checkText(out, "main", true)
 	checkText(out, "topic", false)
 	waitHistory()
@@ -185,6 +203,9 @@ func TestBranchPopup_ToggleAndSearch(t *testing.T) {
 		t.Fatalf("remote on: filter %+v, checkboxes %d, history rows %d", w.filter, len(leaves), len(w.rows))
 	}
 
+	// Collapse Local before searching so clearing search verifies collapsed state is preserved.
+	click(groups[0].ScreenBounds().Center())
+	draw()
 	win.Context().RequestFocus(field)
 	for _, char := range "missing" {
 		win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyUnknown, char, event.ModNone))
@@ -194,12 +215,29 @@ func TestBranchPopup_ToggleAndSearch(t *testing.T) {
 	if len(leaves) != 0 || remote == nil || win.Context().FocusedWidget() != field {
 		t.Fatalf("empty search: %d checkboxes, remote switch %v, focus %T", len(leaves), remote != nil, win.Context().FocusedWidget())
 	}
-	if !slices.ContainsFunc(out.Texts, func(call uitest.DrawTextCall) bool { return strings.Contains(call.Text, "No items") }) {
-		t.Fatal("empty search did not display No items")
+	if !slices.ContainsFunc(out.Texts, func(call uitest.DrawTextCall) bool { return strings.Contains(call.Text, "No matching branches") }) {
+		t.Fatal("empty search did not display No matching branches")
 	}
-	if want := fullHeight - 4*branchRowHeight; height() != want {
+	if !slices.ContainsFunc(out.Texts, func(call uitest.DrawTextCall) bool {
+		return call.Text == "missing" && call.Color == w.theme.Colors.Error
+	}) {
+		t.Error("no-match branch search query should render in error color")
+	}
+	if want := fullHeight - 4*branchRowHeight - dropdownSeparatorHeight; height() != want {
 		t.Errorf("empty search: height %v, want %v", height(), want)
 	}
+	// First button in the panel is the clear search button in FilterInput.
+	click(groups[0].ScreenBounds().Center())
+	out = draw()
+	if field.(*textfield.Widget).Text() != "" || win.Context().FocusedWidget() != field {
+		t.Fatal("clear button should clear query and keep focus on branch search")
+	}
+	if len(groups) != 3 || len(leaves) != 2 {
+		t.Fatalf("after clear search: %d buttons, %d leaves (Local should remain collapsed)", len(groups), len(leaves))
+	}
+	// Expand Local back before the large tree check.
+	click(groups[0].ScreenBounds().Center())
+	draw()
 
 	w.closeToolbarPopup()
 	for i := range 20 {
