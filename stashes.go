@@ -99,54 +99,107 @@ func hasTrackedChanges(files []repo.File) bool {
 }
 
 func (w *workbench) stashDetails(stash repo.Stash) {
-	if w.busy {
+	if w.busy || w.path == "" {
 		return
 	}
-	reinstateIndex := flagField("Restore staged state", false)
-	restore := func(op, label string) func() error {
-		return func() error {
+	w.clearToolbarTooltip()
+	if w.table != nil {
+		w.selected.Set(-1)
+		for i, commit := range w.rows {
+			if commit.Hash == stash.Hash {
+				row := i + w.uncommittedRowCount()
+				w.selected.Set(row)
+				w.table.ScrollToRow(row)
+				break
+			}
+		}
+	}
+	ctx := w.ui.Window().Context()
+	previousFocus := ctx.FocusedWidget()
+	var editor *dialog.Widget
+	reinstateIndex := false
+	closeDialog := func() { editor.Close(ctx) }
+	restore := func(op, label string) func() {
+		return func() {
+			if w.busy || !editor.IsOpen() {
+				return
+			}
 			args := []string{op}
-			if reinstateIndex.checked {
+			if reinstateIndex {
 				args = append(args, "--index")
 			}
 			ref := stash.Selector
 			if op == "apply" {
 				ref = stash.Hash
 			}
+			editor.Close(ctx)
 			w.stashCommand(label+" "+stash.Selector, stash, append(args, ref)...)
-			return nil
 		}
 	}
-	w.present(stash.Selector, []*formField{reinstateIndex},
-		formAction{"Apply stash", restore("apply", "Apply")},
-		formAction{"Pop stash", restore("pop", "Pop")},
-		formAction{"Create branch from stash…", func() error { w.stashBranchForm(stash); return nil }},
-		formAction{"Drop stash…", func() error { w.confirmDropStash(stash); return nil }},
-		formAction{"Copy stash name", func() error { widget.ClipboardWrite(stash.Selector); return nil }},
-		formAction{"Copy commit hash", func() error { widget.ClipboardWrite(stash.Hash); return nil }},
+	applyBtn := w.btn("Apply stash", button.Filled, true, restore("apply", "Apply"))
+	children := []widget.Widget{
+		row(primitives.Expanded(w.text(stash.Selector).Bold().FontSize(15)),
+			w.btn("×", button.TextOnly, true, closeDialog)),
+		line(w),
+	}
+	if stash.Message != "" {
+		children = append(children, w.muted(stash.Message).MaxLines(3))
+	}
+	children = append(children,
+		w.check("Restore staged state", false, true, func(on bool) { reinstateIndex = on }),
+		row(applyBtn,
+			w.btn("Pop stash", button.Outlined, true, restore("pop", "Pop")),
+			w.btn("Create branch from stash…", button.Outlined, true, func() {
+				editor.Close(ctx)
+				w.stashBranchForm(stash)
+			}),
+			w.btn("Drop stash…", button.Outlined, true, func() {
+				editor.Close(ctx)
+				w.confirmDropStash(stash)
+			})),
+		line(w),
+		row(
+			w.btn("Copy stash name", button.TextOnly, true, func() {
+				widget.ClipboardWrite(stash.Selector)
+				editor.Close(ctx)
+			}),
+			w.btn("Copy commit hash", button.TextOnly, true, func() {
+				widget.ClipboardWrite(stash.Hash)
+				editor.Close(ctx)
+			}),
+			primitives.Expanded(primitives.Box()),
+			w.btn("Close", button.TextOnly, true, closeDialog),
+		),
 	)
-	w.form.description = stash.Message
-	w.selected.Set(-1)
-	for i, commit := range w.rows {
-		if commit.Hash == stash.Hash {
-			row := i + w.uncommittedRowCount()
-			w.selected.Set(row)
-			w.table.ScrollToRow(row)
-			break
-		}
-	}
+	panel := primitives.VBox(children...).Width(520).Gap(8).Padding(16).CrossAlign(primitives.CrossAxisStretch)
+	editor = dialog.New(dialog.ContentOnly(), dialog.Content(panel), dialog.MaxWidth(520), dialog.PainterOpt(w.paint.Dialog),
+		dialog.OnClose(func() {
+			if previousFocus != nil && !widget.IsDetached(previousFocus) {
+				ctx.RequestFocus(previousFocus)
+			}
+		}))
+	editor.Show(ctx)
+	ctx.RequestFocus(applyBtn)
 }
 
 func (w *workbench) stashBranchForm(stash repo.Stash) {
+	if w.busy || w.path == "" {
+		return
+	}
 	branch := &formField{label: "Branch name"}
-	w.present("Branch from "+stash.Selector, []*formField{branch}, formAction{"Create branch", func() error {
-		name := strings.TrimSpace(branch.value)
-		if err := validName(name); err != nil {
-			return err
-		}
-		w.stashCommand("Create branch "+name, stash, "branch", name, stash.Selector)
-		return nil
-	}})
+	w.formDialog(formDialogOptions{
+		title:       "Branch from " + stash.Selector,
+		description: stash.Message,
+		submit:      "Create Branch",
+		fields:      []*formField{branch},
+		onSubmit: func() (func(), error) {
+			name := strings.TrimSpace(branch.value)
+			if err := validName(name); err != nil {
+				return nil, err
+			}
+			return func() { w.stashCommand("Create branch "+name, stash, "branch", name, stash.Selector) }, nil
+		},
+	})
 }
 
 func (w *workbench) confirmDropStash(stash repo.Stash) {

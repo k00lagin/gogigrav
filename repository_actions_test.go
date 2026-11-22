@@ -406,57 +406,85 @@ func TestStashesMenuActions(t *testing.T) {
 		t.Fatalf("stash was not saved: %+v", w.data.Stashes)
 	}
 
-	testFooterButton(t, w, 1)
-	testPopupSelection(t, w, "pending")
-	if w.form == nil || w.form.title != "stash@{0}" || !strings.Contains(w.form.description, "A pending change") {
-		t.Fatal("stash details did not open")
+	openStashDialog := func(query string) {
+		t.Helper()
+		testFooterButton(t, w, 1)
+		testPopupSelection(t, w, query)
+		w.ui.Frame()
+		win.DrawOverlays(&uitest.MockCanvas{})
+		if win.OverlayCount() != 1 || w.page != "changes" {
+			t.Fatalf("stash details should open a modal dialog over the workspace, overlays=%d page=%q", win.OverlayCount(), w.page)
+		}
 	}
-	if err := w.form.actions[0].run(); err != nil {
-		t.Fatal(err)
+	dialogButton := func(label string) *button.Widget {
+		t.Helper()
+		var found *button.Widget
+		walkWidgets(win.OverlayContentWidgets()[win.OverlayCount()-1], func(node widget.Widget) {
+			if btn, ok := node.(*button.Widget); ok && found == nil {
+				canvas := &uitest.MockCanvas{}
+				btn.Draw(win.Context(), canvas)
+				for _, dt := range canvas.Texts {
+					if dt.Text == label {
+						found = btn
+					}
+				}
+			}
+		})
+		if found == nil {
+			t.Fatalf("dialog button %q not found", label)
+		}
+		return found
 	}
+
+	openStashDialog("pending")
+	testClick(w, dialogButton("Apply stash").ScreenBounds().Center())
 	testWaitForGit(t, w)
-	if len(w.data.Stashes) != 1 || len(w.data.Files) != 1 {
-		t.Fatal("apply should restore the file and keep the stash")
+	if win.HasOverlays() || len(w.data.Stashes) != 1 || len(w.data.Files) != 1 {
+		t.Fatal("apply should dismiss the dialog, restore the file and keep the stash")
 	}
 	if err := os.Remove(file); err != nil {
 		t.Fatal(err)
 	}
-	testFooterButton(t, w, 1)
-	testPopupSelection(t, w, "pending")
-	w.form.fields[0].checked = true
-	if err := w.form.actions[1].run(); err != nil {
-		t.Fatal(err)
+	openStashDialog("pending")
+	var reinstate *checkbox.Widget
+	walkWidgets(win.OverlayContentWidgets()[0], func(node widget.Widget) {
+		if box, ok := node.(*checkbox.Widget); ok {
+			reinstate = box
+		}
+	})
+	if reinstate == nil {
+		t.Fatal("Restore staged state option is missing")
 	}
+	testClick(w, reinstate.ScreenBounds().Center())
+	testClick(w, dialogButton("Pop stash").ScreenBounds().Center())
 	testWaitForGit(t, w)
-	if len(w.data.Stashes) != 0 || len(w.data.Files) != 1 || !w.data.Files[0].Staged() {
+	if win.HasOverlays() || len(w.data.Stashes) != 0 || len(w.data.Files) != 1 || !w.data.Files[0].Staged() {
 		t.Fatalf("pop should remove the stash and restore staging: %+v", w.data)
 	}
+
 	testGit(t, dir, "stash", "push", "-m", "Branch from this change")
 	w.refresh(w.filter)
 	testWaitForGit(t, w)
-	testFooterButton(t, w, 1)
-	testPopupSelection(t, w, "Branch from")
-	if err := w.form.actions[2].run(); err != nil {
-		t.Fatal(err)
+	openStashDialog("Branch from")
+	testClick(w, dialogButton("Create branch from stash…").ScreenBounds().Center())
+	w.ui.Frame()
+	win.DrawOverlays(&uitest.MockCanvas{})
+	branchField, focused := win.Context().FocusedWidget().(*textfield.Widget)
+	if win.OverlayCount() != 1 || !focused || w.page != "changes" {
+		t.Fatal("Create branch from stash should open a focused modal dialog")
 	}
-	w.form.fields[0].value = "restored"
-	if err := w.form.actions[0].run(); err != nil {
-		t.Fatal(err)
-	}
+	branchField.SetText("restored")
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
 	testWaitForGit(t, w)
-	if w.data.CurrentBranch() != "restored" || len(w.data.Stashes) != 0 || len(w.data.Files) != 1 {
+	if win.HasOverlays() || w.data.CurrentBranch() != "restored" || len(w.data.Stashes) != 0 || len(w.data.Files) != 1 {
 		t.Fatalf("stash branch should switch to restored, restore the file and consume the stash: %+v", w.data)
 	}
 
 	testGit(t, dir, "stash", "push", "-m", "Drop this change")
 	w.refresh(w.filter)
 	testWaitForGit(t, w)
-	testFooterButton(t, w, 1)
-	testPopupSelection(t, w, "Drop this")
-	drop := w.form.actions[3].run
-	if err := drop(); err != nil {
-		t.Fatal(err)
-	}
+	openStashDialog("Drop this")
+	testClick(w, dialogButton("Drop stash…").ScreenBounds().Center())
 	if win.OverlayCount() != 1 || w.busy {
 		t.Fatal("drop should wait for confirmation")
 	}
@@ -464,13 +492,146 @@ func TestStashesMenuActions(t *testing.T) {
 	if w.busy || len(w.data.Stashes) != 1 {
 		t.Fatal("the default confirmation action should cancel")
 	}
-	if err := drop(); err != nil {
-		t.Fatal(err)
-	}
+	openStashDialog("Drop this")
+	testClick(w, dialogButton("Drop stash…").ScreenBounds().Center())
 	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyTab, 0, event.ModNone))
 	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
 	testWaitForGit(t, w)
 	if len(w.data.Stashes) != 0 {
 		t.Fatalf("confirmed drop should remove the stash: %+v", w.data.Stashes)
+	}
+}
+
+func hasSplitView(root widget.Widget) bool {
+	found := false
+	walkWidgets(root, func(node widget.Widget) {
+		if _, ok := node.(*splitview.Widget); ok {
+			found = true
+		}
+	})
+	return found
+}
+
+func TestFormDialogsOverlayHistoryWithoutSidePanel(t *testing.T) {
+	dir, remoteA, remoteB := t.TempDir(), t.TempDir(), t.TempDir()
+	testGit(t, dir, "init", "-b", "main")
+	testGit(t, dir, "-c", "user.name=Tester", "-c", "user.email=tester@example.test",
+		"-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "First")
+	head := testGit(t, dir, "rev-parse", "HEAD")
+
+	w := testWorkbench(t, dir)
+	w.page = "history"
+	w.selected.Set(-1)
+	testActionFrame(w)
+	win := w.ui.Window()
+	if hasSplitView(win.Root()) {
+		t.Fatal("unselected history should not show a split view")
+	}
+
+	// Create tag opens a focused modal dialog and keeps history unselected.
+	w.tagAt(head)
+	w.ui.Frame()
+	win.DrawOverlays(&uitest.MockCanvas{})
+	tagField, focused := win.Context().FocusedWidget().(*textfield.Widget)
+	if win.OverlayCount() != 1 || !focused || w.page != "history" || hasSplitView(win.Root()) {
+		t.Fatal("Create tag should open a focused dialog without a side panel")
+	}
+	tagField.SetText("v1.0.0")
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
+	testWaitForGit(t, w)
+	if win.HasOverlays() || w.page != "history" || hasSplitView(win.Root()) || testGit(t, dir, "rev-parse", "refs/tags/v1.0.0") != head {
+		t.Fatalf("tag was not created cleanly without opening a side panel: page=%q split=%v", w.page, hasSplitView(win.Root()))
+	}
+
+	// Add remote defaults name to "origin" and focuses the empty URL field.
+	w.addRemoteForm()
+	w.ui.Frame()
+	win.DrawOverlays(&uitest.MockCanvas{})
+	urlField, focused := win.Context().FocusedWidget().(*textfield.Widget)
+	if win.OverlayCount() != 1 || !focused || urlField.Text() != "" || w.page != "history" || hasSplitView(win.Root()) {
+		t.Fatal("Add remote should open a focused dialog on the URL field without a side panel")
+	}
+	urlField.SetText(remoteA)
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
+	testWaitForGit(t, w)
+	if win.HasOverlays() || w.page != "history" || hasSplitView(win.Root()) || testGit(t, dir, "remote", "get-url", "origin") != remoteA {
+		t.Fatal("Add remote did not save cleanly without opening a side panel")
+	}
+
+	// Edit remote loads current URL and saves updates in a dialog.
+	w.editRemoteForm("origin")
+	testWaitForGit(t, w)
+	w.ui.Frame()
+	win.DrawOverlays(&uitest.MockCanvas{})
+	editField, focused := win.Context().FocusedWidget().(*textfield.Widget)
+	if win.OverlayCount() != 1 || !focused || editField.Text() != remoteA || w.page != "history" || hasSplitView(win.Root()) {
+		t.Fatal("Edit remote should open a focused dialog with the current URL without a side panel")
+	}
+	editField.SetText(remoteB)
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
+	testWaitForGit(t, w)
+	if win.HasOverlays() || w.page != "history" || hasSplitView(win.Root()) || testGit(t, dir, "remote", "get-url", "origin") != remoteB {
+		t.Fatal("Edit remote did not update URL cleanly without opening a side panel")
+	}
+
+	// Publish, clone, and initialize forms all open modal dialogs cleanly.
+	for _, tc := range []struct {
+		name string
+		open func()
+	}{
+		{"publish", w.publishForm},
+		{"clone", func() { w.cloneForm(dir) }},
+		{"init", func() { w.initRepositoryForm(dir) }},
+	} {
+		tc.open()
+		w.ui.Frame()
+		win.DrawOverlays(&uitest.MockCanvas{})
+		if _, ok := win.Context().FocusedWidget().(*textfield.Widget); win.OverlayCount() != 1 || !ok || w.page != "history" || hasSplitView(win.Root()) {
+			t.Fatalf("%s should open a focused modal dialog without creating a side panel", tc.name)
+		}
+		win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEscape, 0, event.ModNone))
+		if win.HasOverlays() {
+			t.Fatalf("Escape did not dismiss %s dialog", tc.name)
+		}
+	}
+}
+
+func TestUnifiedModeNeverCreatesSidePanelOnCleanTree(t *testing.T) {
+	dir := t.TempDir()
+	testGit(t, dir, "init", "-b", "main")
+	testGit(t, dir, "config", "user.name", "Tester")
+	testGit(t, dir, "config", "user.email", "tester@example.test")
+	testGit(t, dir, "config", "commit.gpgsign", "false")
+	testGit(t, dir, "commit", "--allow-empty", "-m", "Root")
+	file := filepath.Join(dir, "draft.txt")
+	if err := os.WriteFile(file, []byte("hello"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, dir, "add", "--", "draft.txt")
+
+	w := testWorkbench(t, dir)
+	w.prefs.Settings.UnifiedDetails = true
+	testActionFrame(w)
+	win := w.ui.Window()
+	if hasSplitView(win.Root()) || w.inlineContent == nil {
+		t.Fatal("Unified mode should show uncommitted changes inline, not in a split view")
+	}
+
+	// Stashing all changes leaves an empty working tree; Unified mode must not fall back to splitview.
+	testToolbarAction(t, w, stashChangesIcon.Name)
+	w.ui.Frame()
+	win.DrawOverlays(&uitest.MockCanvas{})
+	win.HandleEvent(event.NewKeyEvent(event.KeyPress, event.KeyEnter, 0, event.ModNone))
+	testWaitForGit(t, w)
+	if len(w.data.Files) != 0 || hasSplitView(win.Root()) || w.inlineContent != nil {
+		t.Fatalf("Unified mode opened a side panel after clearing working tree: files=%d split=%v inline=%v page=%q",
+			len(w.data.Files), hasSplitView(win.Root()), w.inlineContent != nil, w.page)
+	}
+
+	// Running another Git command on a clean tree in Unified mode must also avoid splitview.
+	w.command("Create branch", "git", "branch", "topic")
+	testWaitForGit(t, w)
+	if hasSplitView(win.Root()) {
+		t.Fatal("Unified mode opened a split view after a Git command on a clean tree")
 	}
 }

@@ -82,7 +82,7 @@ func (w *workbench) commitHistoryMenu(c repo.Commit) []menu.MenuItem {
 			base, tip = tip, base
 		}
 		items = append(items, menu.Item("Compare with "+selected.Short(), "", func() {
-			w.form, w.file = nil, nil
+			w.file = nil
 			w.inlineClosed = false
 			w.focusHistory = w.prefs.Settings.UnifiedDetails
 			w.revealInline = w.focusHistory

@@ -94,7 +94,7 @@ func (w *workbench) render() {
 			w.table.ScrollToRow(detailRow)
 		}
 		w.revealInline = false
-		if w.page == "history" || w.usesInlineHistory() {
+		if w.page == "history" || w.prefs.Settings.UnifiedDetails {
 			body = history
 		} else {
 			body = splitview.New(splitview.First(history), splitview.Second(w.panel()),
@@ -102,7 +102,7 @@ func (w *workbench) render() {
 				splitview.MinFirst(380), splitview.MinSecond(320), splitview.DividerWidth(3), splitview.PainterOpt(w.paint.SplitView))
 		}
 	} else {
-		body = primitives.VBox(w.panel()).Padding(26).Background(cs.Background)
+		body = primitives.VBox(w.openPanel()).Padding(26).Background(cs.Background)
 	}
 	w.ui.SetRoot(primitives.VBox(w.titleBar, primitives.Expanded(body), line(w), w.statusBar(hint)).Background(cs.Background))
 	if (w.focusHistory || historyFocused) && active && w.viewer == nil {
@@ -236,7 +236,6 @@ func (w *workbench) selectHistoryRow(row int) {
 	if i < -1 || i >= len(w.rows) {
 		return
 	}
-	w.form = nil
 	w.file = nil
 	w.inlineClosed = false
 	w.focusHistory = w.prefs.Settings.UnifiedDetails
@@ -267,28 +266,15 @@ func (w *workbench) showHistoryCommit(c repo.Commit, base, tip string) {
 }
 func (w *workbench) panel() widget.Widget {
 	cs := w.theme.Colors
-	var title string
-	var content widget.Widget
-	switch w.page {
-	case "open":
-		title = "Open repository"
-		content = w.openPanel()
-	case "form":
-		title = w.form.title
-		content = w.formPanel()
-	case "commit":
+	title := "Uncommitted Changes"
+	content := w.changesPanel(false)
+	if w.page == "commit" {
 		title = "Commit details"
 		content = w.commitPanel(false)
-	default:
-		title = "Uncommitted Changes"
-		content = w.changesPanel(false)
 	}
 	head := []widget.Widget{primitives.Expanded(w.text(title).Bold())}
-	if w.path != "" && w.page != "changes" {
+	if w.page != "changes" {
 		head = append(head, w.btn("Changes", button.TextOnly, true, func() { w.commit = repo.Commit{}; w.selected.Set(w.uncommittedRowCount() - 1); w.show("changes") }))
-	}
-	if w.path == "" && w.page != "open" {
-		head = append(head, w.btn("Open repository", button.TextOnly, true, func() { w.show("open") }))
 	}
 	return primitives.VBox(row(head...).PaddingXY(12, 6).Height(40), line(w), primitives.Expanded(content)).Background(cs.Surface)
 }

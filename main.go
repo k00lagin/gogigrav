@@ -120,7 +120,6 @@ type workbench struct {
 	file           *fileItem
 	viewer         *filePreview
 	drafts         map[string]string
-	form           *actionForm
 	amend          bool
 
 	historyHeader    *historyHeader
@@ -265,7 +264,6 @@ func (w *workbench) show(page string) {
 	}
 	w.page = page
 	w.closePreview()
-	w.form = nil
 	w.inlineClosed = false
 	w.redraw()
 }
@@ -366,7 +364,6 @@ func (w *workbench) readRepository(ctx context.Context, paths []string, filter r
 		w.page = "history"
 		w.inlineClosed = false
 		w.amend = false
-		w.form = nil
 		w.file = nil
 		w.commit = repo.Commit{}
 		w.prefs.rememberRepositories(paths)
@@ -511,10 +508,12 @@ func (w *workbench) command(label, tool string, args ...string) {
 
 func (w *workbench) changeRepository(label string, op func(context.Context) error) {
 	w.operation(label, op, func() {
-		w.page = "changes"
-		w.form = nil
-		w.commit = repo.Commit{}
-		w.inlineClosed = false
-		w.selected.Set(w.uncommittedRowCount() - 1)
+		if w.page == "commit" && !slices.ContainsFunc(w.rows, func(c repo.Commit) bool { return c.Hash == w.commit.Hash }) {
+			w.page = "history"
+			w.commit = repo.Commit{}
+			w.compareBase, w.compareTip = "", ""
+			w.changed = nil
+			w.selected.Set(-1)
+		}
 	})
 }
