@@ -143,17 +143,9 @@ func (w *workbench) stashHistoryMenu(s repo.Stash) []menu.MenuItem {
 func (w *workbench) workingHistoryMenu() []menu.MenuItem {
 	return []menu.MenuItem{
 		historyMenuItem("Stash Changes…", w.data.Head != "", w.stashCreateForm),
-		menu.Item("Stage All Changes", "", func() { w.command("Stage all", "git", "add", "-A") }),
-		menu.Item("Unstage All Changes", "", func() {
-			if w.data.Head == "" {
-				w.command("Unstage all", "git", "rm", "-rf", "--cached", "--ignore-unmatch", "--", ".")
-				return
-			}
-			w.command("Unstage all", "git", "reset", "-q")
-		}),
+		historyMenuItem("Stage All Changes", slices.ContainsFunc(w.data.Files, repo.File.Unstaged), func() { w.changeAllIndex(true) }),
+		historyMenuItem("Unstage All Changes", slices.ContainsFunc(w.data.Files, repo.File.Staged), func() { w.changeAllIndex(false) }),
 		menu.Sep(),
-		menu.Item("Discard All Changes…", "", func() {
-			w.confirmDiscard("the working tree", []string{"."})
-		}),
+		historyMenuItem("Discard All Changes…", len(w.data.Files) != 0, w.confirmDiscardAll),
 	}
 }

@@ -7,7 +7,7 @@ import (
 
 // DiscardWithoutStash is used after explicit confirmation in an unborn or
 // conflicted worktree. Git applies literal paths and leaves ignored files alone.
-func DiscardWithoutStash(ctx context.Context, dir string, paths []string, unborn bool) error {
+func DiscardWithoutStash(ctx context.Context, dir string, paths []string, unborn, untracked bool) error {
 	if len(paths) == 0 {
 		return errors.New("no paths selected")
 	}
@@ -29,6 +29,9 @@ func DiscardWithoutStash(ctx context.Context, dir string, paths []string, unborn
 		if err != nil {
 			return err
 		}
+	}
+	if !untracked {
+		return nil
 	}
 	_, err = Run(ctx, dir, "git", append([]string{"clean", "-fd", "--"}, paths...)...)
 	return err

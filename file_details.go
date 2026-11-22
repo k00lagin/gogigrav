@@ -5,9 +5,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gogpu/ui/core/button"
+	"github.com/gogpu/ui/core/popover"
 	"github.com/gogpu/ui/core/treeview"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
+	"github.com/gogpu/ui/icon"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
 	"github.com/gogpu/ui/widget"
@@ -83,27 +86,43 @@ func compactFileFolders(parent *treeview.TreeNode) {
 	})
 }
 
-func (w *workbench) fileSection(title, empty string, files []repo.File, stage bool, maxRows int, selection state.Signal[string]) widget.Widget {
+func (w *workbench) fileSection(title, empty string, files []repo.File, stage, worktree bool, maxRows int, selection state.Signal[string]) widget.Widget {
 	colors := w.theme.Colors
 	header := &fileSectionHeader{title: strings.ToUpper(title), count: strconv.Itoa(len(files)),
 		text: colors.OnSurface, badgeText: colors.OnSurfaceSecondary, badge: colors.Border}
 	header.SetVisible(true)
+	var heading widget.Widget = header
+	if worktree {
+		glyph := icon.Minus
+		if stage {
+			glyph = icon.ExpAdd
+		}
+		label := fileIndexLabel(stage, false) + " all"
+		all := w.iconButton(glyph, label, 24, 14, func() bool { return w.busy || len(files) == 0 },
+			func() { w.changeAllIndex(stage) })
+		heading = &buttonHints{BoxWidget: row(primitives.Expanded(header), all).Height(30).PaddingRight(6),
+			bench: w, hints: map[*button.Widget]string{all: label}, placement: popover.BottomEnd}
+	}
 	if len(files) == 0 {
 		message := row(w.muted(empty)).Height(fileRowHeight+8).PaddingXY(12, 0)
-		return primitives.VBox(header, line(w), message)
+		return primitives.VBox(heading, line(w), message)
 	}
 
 	root := fileTreeRoot(title, files, stage)
-	painter := fileTreePainter{
+	painter := &fileTreePainter{
 		TreeViewPainter: w.paint.TreeView,
 		dark:            w.theme.IsDark(),
 		colors:          w.fileChangeColors(),
+		actions:         worktree && !w.busy,
+		stage:           stage,
 	}
+	var selected *treeview.TreeNode
 	tree := treeview.New(treeview.Root(root), treeview.HideRoot(true), treeview.FitContent(maxRows > 0),
 		treeview.A11yLabel(title), treeview.SelectionModeOpt(treeview.SelectionSingle),
 		treeview.SelectedNodeSignal(selection), treeview.ItemHeight(fileRowHeight), treeview.IndentWidth(16),
 		treeview.ShowLines(true), treeview.PainterOpt(painter), treeview.ScrollbarPainterOpt(w.paint.Scrollbar),
 		treeview.OnSelect(func(n *treeview.TreeNode) {
+			selected = n
 			w.file, _ = n.Data.(*fileItem)
 			if v := w.viewer; v != nil && w.file != nil {
 				for i, f := range files {
@@ -116,15 +135,35 @@ func (w *workbench) fileSection(title, empty string, files []repo.File, stage bo
 			w.ui.Window().Context().Invalidate()
 		}))
 	wrap := func(box *primitives.BoxWidget) widget.Widget {
-		return &fileTreeActions{BoxWidget: box, tree: tree, root: root,
+		actions := &fileTreeActions{BoxWidget: box, tree: tree, root: root, bench: w, stage: stage,
 			activate: func(n *treeview.TreeNode, menu bool, at geometry.Point) {
 				w.fileTreeAction(title, n, files, stage, menu, at)
 			}}
+		if worktree {
+			actions.selected = func() *treeview.TreeNode {
+				if selected != nil && selection.Get() == selected.ID {
+					return selected
+				}
+				return nil
+			}
+			actions.change = func(n *treeview.TreeNode, discard bool) {
+				if w.busy {
+					return
+				}
+				paths := fileTreePaths(title, n, files, stage, discard)
+				if discard {
+					w.confirmDiscard(paths[0], paths)
+				} else {
+					w.changeFileIndex(fileIndexLabel(stage, !n.IsLeaf()), paths, stage)
+				}
+			}
+		}
+		return actions
 	}
 	if maxRows > 0 {
-		return wrap(primitives.VBox(header, line(w), primitives.VBox(tree).MaxHeightValue(float32(maxRows)*fileRowHeight)))
+		return wrap(primitives.VBox(heading, line(w), primitives.VBox(tree).MaxHeightValue(float32(maxRows)*fileRowHeight)))
 	}
-	return wrap(primitives.VBox(header, line(w), primitives.Expanded(tree)))
+	return wrap(primitives.VBox(heading, line(w), primitives.Expanded(tree)))
 }
 
 type fileSectionHeader struct {
@@ -168,8 +207,8 @@ func (w *workbench) worktreeFiles(files []repo.File) widget.Widget {
 	if len(unstaged) != 0 {
 		stagedRows = 5
 	}
-	stagedSection := w.fileSection("Staged changes", "No staged changes", staged, false, stagedRows, selection)
-	unstagedSection := w.fileSection("Changes", "No unstaged changes", unstaged, true, 0, selection)
+	stagedSection := w.fileSection("Staged changes", "No staged changes", staged, false, true, stagedRows, selection)
+	unstagedSection := w.fileSection("Changes", "No unstaged changes", unstaged, true, true, 0, selection)
 	if len(unstaged) == 0 && len(staged) != 0 {
 		return primitives.VBox(primitives.Expanded(stagedSection), line(w), unstagedSection)
 	}

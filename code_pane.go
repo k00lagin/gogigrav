@@ -20,13 +20,15 @@ const (
 
 type codePane struct {
 	widget.WidgetBase
-	rows    []previewRow
-	side    int
-	wrap    bool
-	colors  devtools.ColorScheme
-	scroll  *scrollview.Widget
-	starts  []int
-	columns int
+	rows      []previewRow
+	side      int
+	wrap      bool
+	colors    devtools.ColorScheme
+	scroll    *scrollview.Widget
+	starts    []int
+	columns   int
+	hunkLabel string
+	applyHunk func(int)
 }
 
 func (p *codePane) Layout(_ widget.Context, c geometry.Constraints) geometry.Size {
@@ -47,7 +49,30 @@ func (p *codePane) Layout(_ widget.Context, c geometry.Constraints) geometry.Siz
 	}
 	return c.Constrain(geometry.Sz(float32(widest)*codeCell+codeGutter+16, float32(p.starts[len(p.rows)])*codeRowHeight))
 }
-func (*codePane) Event(widget.Context, event.Event) bool { return false }
+func (p *codePane) hunkButtonBounds(y float32) geometry.Rect {
+	const width = 105
+	x, _ := p.scroll.ScrollOffset()
+	right := x + p.scroll.ViewportSize().Width - p.scroll.ScrollbarInset() - 6
+	return geometry.NewRect(right-width, y+1, width, codeRowHeight-2)
+}
+
+func (p *codePane) Event(ctx widget.Context, e event.Event) bool {
+	mouse, ok := e.(*event.MouseEvent)
+	if !ok || p.applyHunk == nil || (mouse.MouseType != event.MouseMove && mouse.MouseType != event.MousePress) || len(p.starts) == 0 {
+		return false
+	}
+	row := sort.Search(len(p.rows), func(i int) bool { return float32(p.starts[i+1])*codeRowHeight > mouse.Position.Y })
+	if row == len(p.rows) || p.rows[row].hunk == 0 || !p.hunkButtonBounds(float32(p.starts[row])*codeRowHeight).Contains(mouse.Position) {
+		return false
+	}
+	if mouse.MouseType == event.MouseMove {
+		ctx.SetCursor(widget.CursorPointer)
+	} else if mouse.Button == event.ButtonLeft {
+		p.applyHunk(p.rows[row].hunk - 1)
+		return true
+	}
+	return false
+}
 func (p *codePane) Draw(_ widget.Context, c widget.Canvas) {
 	if len(p.starts) == 0 {
 		return
@@ -57,6 +82,7 @@ func (p *codePane) Draw(_ widget.Context, c widget.Canvas) {
 	first := sort.Search(len(p.rows), func(i int) bool { return float32(p.starts[i+1])*codeRowHeight > offset })
 	for i := first; i < len(p.rows); i++ {
 		y := float32(p.starts[i]) * codeRowHeight
+		headerY := y
 		if y >= bottom {
 			break
 		}
@@ -120,6 +146,11 @@ func (p *codePane) Draw(_ widget.Context, c widget.Canvas) {
 					column = 0
 				}
 			}
+		}
+		if p.applyHunk != nil && p.rows[i].hunk != 0 {
+			button := p.hunkButtonBounds(headerY)
+			c.DrawRoundRect(button, p.colors.ControlFill, 4)
+			c.DrawText(p.hunkLabel, button, 12, p.colors.OnSurface, false, widget.TextAlignCenter)
 		}
 	}
 }

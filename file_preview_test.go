@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,9 +13,81 @@ import (
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
 	"github.com/gogpu/ui/overlay"
+	"github.com/gogpu/ui/uitest"
 	"github.com/gogpu/ui/widget"
 	"gogigrav/internal/repo"
 )
+
+func TestPreviewStagesAndUnstagesIndividualHunks(t *testing.T) {
+	dir := t.TempDir()
+	testGit(t, dir, "init", "-b", "main")
+	path := "code [1].txt"
+	var lines []string
+	for i := range 32 {
+		lines = append(lines, fmt.Sprintf("line %d", i))
+	}
+	original := strings.Join(lines, "\n")
+	write := func() {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, path), []byte(strings.Join(lines, "\n")+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	testGit(t, dir, "add", "--", path)
+	testGit(t, dir, "-c", "user.name=test", "-c", "user.email=test@test", "commit", "-qm", "first")
+	lines[2], lines[26] = "first edit", "second edit"
+	write()
+	w := testWorkbench(t, dir)
+	win := w.ui.Window()
+	clickHunk := func(unstaged bool, label string) {
+		t.Helper()
+		w.openPreview(w.data.Files, 0, unstaged, false, diffMode)
+		select {
+		case apply := <-w.done:
+			apply()
+		case <-time.After(15 * time.Second):
+			t.Fatal("timed out loading diff")
+		}
+		testActionFrame(w)
+		var pane *codePane
+		walkWidgets(win.Root(), func(node widget.Widget) {
+			if code, ok := node.(*codePane); ok && code.hunkLabel == label {
+				pane = code
+			}
+		})
+		if pane == nil || len(pane.rows) == 0 || pane.rows[0].hunk != 1 {
+			t.Fatalf("missing %s button on the first hunk", label)
+		}
+		win.DrawTo(&uitest.MockCanvas{})
+		testClick(w, pane.hunkButtonBounds(0).Center().Add(pane.ScreenOrigin()))
+		testWaitForGit(t, w)
+		if w.viewer != nil && w.viewer.loading {
+			select {
+			case apply := <-w.done:
+				apply()
+			case <-time.After(15 * time.Second):
+				t.Fatal("timed out refreshing diff")
+			}
+		}
+	}
+	clickHunk(true, "Stage hunk")
+	want := strings.Replace(original, "line 2\n", "first edit\n", 1)
+	if got := testGit(t, dir, "show", ":"+path); got != want {
+		t.Fatalf("stage hunk produced index %q", got)
+	}
+	if w.viewer == nil || len(w.viewer.rows) == 0 || !strings.Contains(lineText(w.viewer.rows[0].left), "-24,") {
+		t.Fatal("diff did not refresh to the remaining change")
+	}
+	w.prefs.Settings.SplitDiff = true
+	clickHunk(false, "Unstage hunk")
+	if got := testGit(t, dir, "show", ":"+path); got != original {
+		t.Fatalf("unstage hunk produced index %q", got)
+	}
+	if working, err := os.ReadFile(filepath.Join(dir, path)); err != nil || string(working) != strings.Join(lines, "\n")+"\n" {
+		t.Fatalf("worktree changed after hunk operations: %s, %v", working, err)
+	}
+}
 
 func lineText(l codeLine) string {
 	var s strings.Builder
@@ -46,7 +119,7 @@ func TestPreviewUsesIndexAndWorkingSnapshots(t *testing.T) {
 		left, right string
 	}{{false, "package before", "package staged"}, {true, "package staged", "package working"}} {
 		target := w.target(w.data.Files[0], tc.unstaged)
-		result, err := previewLines(t.Context(), dir, target, diffMode, true, false)
+		result, err := previewLines(t.Context(), dir, target, diffMode, true, false, "")
 		if err != nil {
 			t.Fatal(err)
 		}

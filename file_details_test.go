@@ -1,9 +1,13 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/gogpu/ui/core/button"
+	"github.com/gogpu/ui/core/checkbox"
 	"github.com/gogpu/ui/core/treeview"
 	"github.com/gogpu/ui/event"
 	"github.com/gogpu/ui/geometry"
@@ -11,6 +15,168 @@ import (
 	"github.com/gogpu/ui/widget"
 	"gogigrav/internal/repo"
 )
+
+func TestWorktreeRowAndSectionActions(t *testing.T) {
+	dir := t.TempDir()
+	testGit(t, dir, "init", "-b", "main")
+	write := func(path, content string) {
+		t.Helper()
+		name := filepath.Join(dir, path)
+		if err := os.MkdirAll(filepath.Dir(name), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, []byte(content+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("tracked.txt", "original")
+	testGit(t, dir, "add", "--", ".")
+	testGit(t, dir, "-c", "user.name=test", "-c", "user.email=test@test", "commit", "-qm", "first")
+	write("tracked.txt", "changed")
+	write("sub [1]/new.txt", "new")
+	w := testWorkbench(t, dir)
+	w.prefs.Settings.UnifiedDetails = true
+	testActionFrame(w)
+	win := w.ui.Window()
+	rowAction := func(stage bool, row int, discard bool) {
+		t.Helper()
+		var section *fileTreeActions
+		walkWidgets(w.inlineContent, func(node widget.Widget) {
+			if tree, ok := node.(*fileTreeActions); ok && tree.stage == stage {
+				section = tree
+			}
+		})
+		if section == nil {
+			t.Fatal("missing worktree tree")
+		}
+		bounds := section.tree.ScreenBounds()
+		_, rowBounds, _ := section.rowAt(bounds.Min.Add(geometry.Pt(20, float32(row)*fileRowHeight+fileRowHeight/2)))
+		remove, index := fileRowButtons(rowBounds)
+		point := index.Center()
+		if discard {
+			point = remove.Center()
+		}
+		win.HandleEvent(event.NewMouseEvent(event.MouseMove, event.ButtonNone, 0, point, point, event.ModNone))
+		if w.toolbarHover.bar != section {
+			t.Fatal("row action did not offer a tooltip on hover")
+		}
+		testClick(w, point)
+	}
+	bulk := func(label string) {
+		t.Helper()
+		var control *button.Widget
+		walkWidgets(w.inlineContent, func(node widget.Widget) {
+			if heading, ok := node.(*buttonHints); ok {
+				for btn, hint := range heading.hints {
+					if hint == label {
+						control = btn
+					}
+				}
+			}
+		})
+		if control == nil {
+			t.Fatalf("missing section button %q", label)
+		}
+		testClick(w, control.ScreenBounds().Center())
+		testWaitForGit(t, w)
+	}
+
+	rowAction(true, 0, false) // Folder.
+	testWaitForGit(t, w)
+	if got := testGit(t, dir, "diff", "--cached", "--name-only"); got != "sub [1]/new.txt" {
+		t.Fatalf("stage folder staged %q", got)
+	}
+	rowAction(false, 1, false) // File.
+	testWaitForGit(t, w)
+	if got := testGit(t, dir, "diff", "--cached", "--name-only"); got != "" {
+		t.Fatalf("unstage file left %q staged", got)
+	}
+	bulk("Stage all")
+	if got := testGit(t, dir, "diff", "--cached", "--name-only"); got != "sub [1]/new.txt\ntracked.txt" {
+		t.Fatalf("stage all staged %q", got)
+	}
+	bulk("Unstage all")
+	if got := testGit(t, dir, "diff", "--cached", "--name-only"); got != "" {
+		t.Fatalf("unstage all left %q staged", got)
+	}
+
+	key := func(k event.Key) { win.HandleEvent(event.NewKeyEvent(event.KeyPress, k, 0, event.ModNone)) }
+	walkWidgets(w.inlineContent, func(node widget.Widget) {
+		if tree, ok := node.(*fileTreeActions); ok && tree.stage {
+			testClick(w, tree.tree.ScreenBounds().Min.Add(geometry.Pt(90, 2.5*fileRowHeight)))
+		}
+	})
+	key(event.KeySpace)
+	testWaitForGit(t, w)
+	if got := testGit(t, dir, "diff", "--cached", "--name-only"); got != "tracked.txt" {
+		t.Fatalf("Space staged %q", got)
+	}
+
+	rowAction(true, 0, true)
+	if w.busy || !win.HasOverlays() {
+		t.Fatal("discard folder should wait for confirmation")
+	}
+	key(event.KeyEnter)
+	if w.busy || win.HasOverlays() {
+		t.Fatal("the default discard action should cancel")
+	}
+	rowAction(true, 0, true)
+	key(event.KeyTab)
+	key(event.KeyEnter)
+	testWaitForGit(t, w)
+	if got := testGit(t, dir, "status", "--porcelain", "-uall"); got != "M  tracked.txt" {
+		t.Fatalf("discard folder touched the wrong files: %q", got)
+	}
+
+	write("keep.txt", "untracked")
+	w.refresh(w.filter)
+	testWaitForGit(t, w)
+	discardAll := func(includeUntracked bool) {
+		t.Helper()
+		var trigger, submit *button.Widget
+		findButton := func(root widget.Widget, label string) *button.Widget {
+			var found *button.Widget
+			walkWidgets(root, func(node widget.Widget) {
+				if btn, ok := node.(*button.Widget); ok {
+					canvas := &uitest.MockCanvas{}
+					btn.Draw(win.Context(), canvas)
+					for _, call := range canvas.Texts {
+						if call.Text == label {
+							found = btn
+						}
+					}
+				}
+			})
+			if found == nil {
+				t.Fatalf("missing button %q", label)
+			}
+			return found
+		}
+		trigger = findButton(w.inlineContent, "Discard All…")
+		testClick(w, trigger.ScreenBounds().Center())
+		w.ui.Frame()
+		win.DrawOverlays(&uitest.MockCanvas{})
+		overlay := win.OverlayContentWidgets()[0]
+		if includeUntracked {
+			walkWidgets(overlay, func(node widget.Widget) {
+				if check, ok := node.(*checkbox.Widget); ok {
+					testClick(w, check.ScreenBounds().Center())
+				}
+			})
+		}
+		submit = findButton(overlay, "Discard all")
+		testClick(w, submit.ScreenBounds().Center())
+		testWaitForGit(t, w)
+	}
+	discardAll(false)
+	if got := testGit(t, dir, "status", "--porcelain"); got != "?? keep.txt" {
+		t.Fatalf("default discard all status = %q", got)
+	}
+	discardAll(true)
+	if got := testGit(t, dir, "status", "--porcelain"); got != "" || len(w.data.Stashes) != 3 {
+		t.Fatalf("discard all including untracked left %q, stashes %v", got, w.data.Stashes)
+	}
+}
 
 func TestFileTreeCompactsOnlySingleFolderChains(t *testing.T) {
 	root := fileTreeRoot("Changes", []repo.File{

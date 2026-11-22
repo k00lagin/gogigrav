@@ -25,6 +25,8 @@ import (
 	"gogigrav/internal/repo"
 )
 
+var discardAllIcon = intIcon("revert")
+
 func (w *workbench) text(s string) *primitives.TextWidget {
 	return primitives.Text(s).FontSize(13).Color(w.theme.Colors.OnSurface)
 }
@@ -390,7 +392,7 @@ func (w *workbench) commitPanel(inline bool) widget.Widget {
 	}
 	meta = append(meta, row(w.btn("Create branch", button.Outlined, true, func() { w.branchAt(c.Hash) }), w.btn("Create tag", button.Outlined, true, func() { w.tagAt(c.Hash) })))
 	metadata := primitives.VBox(meta...).Padding(12).Gap(5)
-	files := w.fileSection("Changed files", "No changed files", w.changed, false, 0, state.NewSignal(""))
+	files := w.fileSection("Changed files", "No changed files", w.changed, false, false, 0, state.NewSignal(""))
 	if inline {
 		return w.inlineColumns(scrollview.New(metadata, scrollview.PainterOpt(w.paint.Scrollbar)), files)
 	}
@@ -426,24 +428,23 @@ func (w *workbench) changesPanel(inline bool) widget.Widget {
 		}
 		w.redraw()
 	})
-	controls := primitives.VBox(w.muted("Commit to "+d.Branch), compactInput(msg), row(w.btn("Commit", button.Filled, staged || w.amend, commit), amend)).Gap(7).Padding(12)
-	selectAction := func(stage bool) widget.Widget {
-		title := "Unstage"
-		if stage {
-			title = "Stage"
-		}
-		return button.New(button.TextOpt(title), button.SizeOpt(button.Small), button.VariantOpt(button.Outlined), button.PainterOpt(w.paint.Button), button.DisabledFn(func() bool { return w.busy || w.file == nil || w.file.stage != stage }), button.OnClick(func() {
-			if w.file == nil {
-				return
-			}
-			path, f, unborn := w.path, w.file.file, d.Head == ""
-			w.operation(title, func(ctx context.Context) error { return repo.ChangeIndex(ctx, path, f, stage, unborn) }, nil)
-		}))
+	action := func(label string, glyph icon.IconData, enabled bool, click func()) *button.Widget {
+		return button.New(button.TextOpt(label), button.SizeOpt(button.Small), button.VariantOpt(button.Outlined),
+			button.Disabled(!enabled || w.busy), button.OnClick(click),
+			button.PainterOpt(iconLabelButtonPainter{ButtonPainter: w.paint.Button, glyph: glyph}))
 	}
-	actions := row(selectAction(true), selectAction(false), w.btn("Stage all", button.TextOnly, slices.ContainsFunc(d.Files, repo.File.Unstaged), func() { w.command("Stage all", "git", "add", "-A", "--", ".") })).PaddingXY(10, 6)
+	controls := primitives.VBox(
+		w.muted("Commit to "+d.Branch),
+		compactInput(msg),
+		row(w.btn("Commit", button.Filled, staged || w.amend, commit), amend),
+		row(
+			action("Stash…", stashChangesIcon, d.Head != "" && len(d.Files) != 0, w.stashCreateForm),
+			action("Discard All…", discardAllIcon, len(d.Files) != 0, w.confirmDiscardAll),
+		),
+	).Gap(7).Padding(12)
 	files := w.worktreeFiles(d.Files)
 	if inline {
-		return w.inlineColumns(controls, primitives.VBox(actions, line(w), primitives.Expanded(files)))
+		return w.inlineColumns(controls, files)
 	}
-	return primitives.VBox(controls, line(w), actions, primitives.Expanded(files))
+	return primitives.VBox(controls, line(w), primitives.Expanded(files))
 }

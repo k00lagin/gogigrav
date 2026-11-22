@@ -111,7 +111,7 @@ func TestStatusBranchTooltipFollowsHover(t *testing.T) {
 	w := testWorkbench(t, dir)
 	win := w.ui.Window()
 	root := win.Root().Children()
-	status := root[len(root)-1].(*statusHints)
+	status := root[len(root)-1].(*buttonHints)
 	var position geometry.Point
 	for control := range status.hints {
 		position = control.ScreenBounds().Center()

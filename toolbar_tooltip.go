@@ -61,6 +61,10 @@ func (w *workbench) updateToolbarTooltip(now time.Time) {
 		w.clearToolbarTooltip()
 		return
 	}
+	if files, ok := h.bar.(*fileTreeActions); ok && win.HoveredWidget() != files.tree.Children()[0].Children()[0] {
+		w.clearToolbarTooltip()
+		return
+	}
 	if h.visible != nil || now.Before(h.due) {
 		return
 	}

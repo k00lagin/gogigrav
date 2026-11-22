@@ -24,7 +24,7 @@ func TestDiscardFolderBeforeFirstCommit(t *testing.T) {
 	if _, err := Run(t.Context(), dir, "git", "add", "--", "src [1]/index", "other"); err != nil {
 		t.Fatal(err)
 	}
-	if err := DiscardWithoutStash(t.Context(), dir, []string{"src [1]"}, true); err != nil {
+	if err := DiscardWithoutStash(t.Context(), dir, []string{"src [1]"}, true, true); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{"index", "untracked"} {

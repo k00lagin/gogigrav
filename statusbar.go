@@ -87,16 +87,17 @@ func (w *workbench) statusBar(hint state.Signal[string]) widget.Widget {
 			button.OnClick(func() { f := w.filter; f.Limit += 250; w.refresh(f) })))
 	}
 	items = append(items, w.muted(w.path).FontSize(12).MaxLines(1).Ellipsis())
-	return &statusHints{BoxWidget: row(items...).PaddingXY(8, 2).Background(w.theme.Colors.Surface), bench: w, hints: hints}
+	return &buttonHints{BoxWidget: row(items...).PaddingXY(8, 2).Background(w.theme.Colors.Surface), bench: w, hints: hints, placement: popover.TopStart}
 }
 
-type statusHints struct {
+type buttonHints struct {
 	*primitives.BoxWidget
-	bench *workbench
-	hints map[*button.Widget]string
+	bench     *workbench
+	hints     map[*button.Widget]string
+	placement popover.Placement
 }
 
-func (s *statusHints) Event(ctx widget.Context, e event.Event) bool {
+func (s *buttonHints) Event(ctx widget.Context, e event.Event) bool {
 	if mouse, ok := e.(*event.MouseEvent); ok {
 		b := s.bench
 		switch mouse.MouseType {
@@ -106,7 +107,7 @@ func (s *statusHints) Event(ctx widget.Context, e event.Event) bool {
 				for control, label := range s.hints {
 					if control.ScreenBounds().Contains(mouse.GlobalPosition) {
 						hovered = control
-						b.hoverToolbarItem(control, 0, label, control.ScreenBounds, popover.TopStart)
+						b.hoverToolbarItem(control, 0, label, control.ScreenBounds, s.placement)
 						break
 					}
 				}
@@ -121,7 +122,7 @@ func (s *statusHints) Event(ctx widget.Context, e event.Event) bool {
 	return s.BoxWidget.Event(ctx, e)
 }
 
-func (s *statusHints) clearTooltip() {
+func (s *buttonHints) clearTooltip() {
 	if control, ok := s.bench.toolbarHover.bar.(*button.Widget); ok && s.hints[control] != "" {
 		s.bench.clearToolbarTooltip()
 	}
@@ -146,26 +147,26 @@ func (w *workbench) currentBranchLabel() string {
 }
 
 func (w *workbench) statusButton(label string, glyph icon.IconData, enabled bool, popupID string, click func()) *button.Widget {
-	painter := statusButtonPainter{ButtonPainter: w.paint.Button, glyph: glyph,
+	painter := iconLabelButtonPainter{ButtonPainter: w.paint.Button, glyph: glyph,
 		active: func() bool { return popupID != "" && w.popupIcon == popupID }}
 	return button.New(button.TextOpt(label), button.VariantOpt(button.TextOnly), button.SizeOpt(button.Small),
 		button.Disabled(!enabled || w.busy), button.OnClick(click), button.PainterOpt(painter))
 }
 
-type statusButtonPainter struct {
+type iconLabelButtonPainter struct {
 	devtools.ButtonPainter
 	glyph  icon.IconData
 	active func() bool
 }
 
-func (p statusButtonPainter) ButtonHeight(button.Size) float32             { return 24 }
-func (p statusButtonPainter) ButtonPadding(button.Size) (float32, float32) { return 15, 0 }
-func (p statusButtonPainter) ButtonFontSize(button.Size) float32           { return 12 }
+func (p iconLabelButtonPainter) ButtonHeight(button.Size) float32             { return 24 }
+func (p iconLabelButtonPainter) ButtonPadding(button.Size) (float32, float32) { return 15, 0 }
+func (p iconLabelButtonPainter) ButtonFontSize(button.Size) float32           { return 12 }
 
-func (p statusButtonPainter) PaintButton(canvas widget.Canvas, s button.PaintState) {
+func (p iconLabelButtonPainter) PaintButton(canvas widget.Canvas, s button.PaintState) {
 	label := s.Text
 	s.Text = ""
-	s.Hovered = s.Hovered || p.active()
+	s.Hovered = s.Hovered || (p.active != nil && p.active())
 	p.ButtonPainter.PaintButton(canvas, s)
 	color := p.Theme.Colors.OnSurface
 	if s.Disabled {

@@ -484,6 +484,7 @@ func (w *workbench) operation(label string, op func(context.Context) error, afte
 				w.data, w.filter = data, f
 				w.file = nil
 				w.filterRows()
+				w.refreshPreview()
 			}
 			if actionErr != nil {
 				w.status = actionErr.Error()

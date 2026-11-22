@@ -67,11 +67,31 @@ func (s fileIconSet) forPath(file string) fileIcon {
 
 type fileTreePainter struct {
 	devtools.TreeViewPainter
-	dark   bool
-	colors map[byte]widget.Color
+	dark                        bool
+	colors                      map[byte]widget.Color
+	actions, stage, showActions bool
+}
+
+func (p *fileTreePainter) PaintRowBackground(canvas widget.Canvas, state treeview.RowPaintState) {
+	p.TreeViewPainter.PaintRowBackground(canvas, state)
+	p.showActions = p.actions && !state.Disabled && (state.Hovered || state.Focused)
 }
 
 func (p fileTreePainter) PaintLabel(canvas widget.Canvas, state treeview.LabelState) {
+	if p.showActions {
+		discard, change := fileRowButtons(state.Bounds)
+		fg := p.Theme.Colors.OnSurfaceSecondary
+		glyph := icon.Minus
+		if p.stage {
+			glyph = icon.ExpAdd
+		}
+		paint := func(image icon.IconData, bounds geometry.Rect) {
+			center := bounds.Center()
+			icon.Draw(canvas, image, geometry.NewRect(center.X-7, center.Y-7, 14, 14), fg)
+		}
+		paint(discardFileIcon, discard)
+		paint(glyph, change)
+	}
 	if state.Node != nil {
 		if item, ok := state.Node.Data.(*fileItem); ok {
 			p.paintFileLabel(canvas, state, item)
@@ -100,6 +120,10 @@ func (p fileTreePainter) paintFolderLabel(canvas widget.Canvas, state treeview.L
 	}
 	icon.Draw(canvas, icon.ExpFolder, geometry.NewRect(bounds.Min.X, bounds.Center().Y-iconSize/2, iconSize, iconSize), iconColor)
 	bounds.Min.X += iconSize + gap
+	if p.showActions {
+		discard, _ := fileRowButtons(state.Bounds)
+		bounds.Max.X = max(bounds.Min.X, discard.Min.X-5)
+	}
 	canvas.PushClip(bounds)
 	canvas.DrawText(state.Text, bounds, 13, fg, false, widget.TextAlignLeft)
 	canvas.PopClip()
@@ -126,7 +150,10 @@ func (p fileTreePainter) paintFileLabel(canvas widget.Canvas, state treeview.Lab
 		canvas.DrawText(marker, statusBounds, 12, color, true, widget.TextAlignCenter)
 		right = statusBounds.Min.X - 4
 	}
-	if stat.Text {
+	if p.showActions {
+		discard, _ := fileRowButtons(state.Bounds)
+		right = discard.Min.X
+	} else if stat.Text {
 		const statGap = 6
 		added := "+" + strconv.Itoa(stat.Added)
 		deleted := "−" + strconv.Itoa(stat.Deleted)

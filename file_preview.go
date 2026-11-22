@@ -78,6 +78,7 @@ type filePreview struct {
 	loading           bool
 	err               error
 	rows              []previewRow
+	indexPatch        string
 }
 
 func (v *filePreview) target(w *workbench) fileTarget {
@@ -104,10 +105,17 @@ func (w *workbench) openPreview(files []repo.File, index int, unstaged, compare 
 		v.mode = beforeMode
 	}
 	dir, dark := w.path, w.theme.IsDark()
+	worktreeDiff := w.page == "changes" && v.mode == diffMode && !v.compare
 	w.redraw()
 	w.runJob(func(ctx context.Context) (func(), error) {
-		rows, err := previewLines(ctx, dir, t, v.mode, dark, v.compare)
-		return func() { v.loading = false; v.rows = rows; v.err = err }, nil
+		var patch string
+		if worktreeDiff {
+			patch, _ = repo.IndexDiff(ctx, dir, t.file, v.unstaged)
+		}
+		rows, err := previewLines(ctx, dir, t, v.mode, dark, v.compare, patch)
+		return func() {
+			v.loading, v.rows, v.err, v.indexPatch = false, rows, err, patch
+		}, nil
 	}, func(apply func(), _ error) {
 		if w.viewer == v {
 			apply()
@@ -201,6 +209,19 @@ func (w *workbench) previewPanel() widget.Widget {
 		offset := state.NewSignal(float32(0))
 		pane := func(side int) widget.Widget {
 			code := &codePane{rows: rows, side: side, wrap: w.previewWrap, colors: w.theme.Colors}
+			if !w.busy && v.indexPatch != "" && (!split || side == 1) {
+				label := fileIndexLabel(v.unstaged, false) + " hunk"
+				code.hunkLabel = label
+				code.applyHunk = func(index int) {
+					if w.viewer != v || w.busy {
+						return
+					}
+					dir := w.path
+					w.operation(label, func(ctx context.Context) error {
+						return repo.ApplyIndexHunk(ctx, dir, t.file, v.unstaged, v.indexPatch, index)
+					}, nil)
+				}
+			}
 			code.SetVisible(true)
 			direction := scrollview.Both
 			if code.wrap {
@@ -215,7 +236,7 @@ func (w *workbench) previewPanel() widget.Widget {
 		}
 	}
 	if w.previewSidebar {
-		side := w.fileSection("Files", "", v.files, v.unstaged, 0, state.NewSignal("Files/"+t.file.Path))
+		side := w.fileSection("Files", "", v.files, v.unstaged, false, 0, state.NewSignal("Files/"+t.file.Path))
 		content = primitives.HBox(primitives.Expanded(content), primitives.Box().Width(1).Background(w.theme.Colors.Border), primitives.VBox(side).Width(250)).CrossAlign(primitives.CrossAxisStretch)
 	}
 	describe := func(side repo.FileSide) string {
@@ -252,7 +273,10 @@ type codeLine struct {
 	kind   byte
 	width  int
 }
-type previewRow struct{ left, right codeLine }
+type previewRow struct {
+	left, right codeLine
+	hunk        int // One-based index of a hunk header with an index action.
+}
 
 func highlighted(path, src string, dark bool) ([]codeLine, error) {
 	if src == "" {
@@ -307,7 +331,7 @@ func highlighted(path, src string, dark bool) ([]codeLine, error) {
 
 var hunkStart = regexp.MustCompile(`^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@`)
 
-func previewLines(ctx context.Context, dir string, t fileTarget, mode string, dark, compare bool) ([]previewRow, error) {
+func previewLines(ctx context.Context, dir string, t fileTarget, mode string, dark, compare bool, indexPatch string) ([]previewRow, error) {
 	if mode != diffMode {
 		side := t.after
 		switch mode {
@@ -335,9 +359,12 @@ func previewLines(ctx context.Context, dir string, t fileTarget, mode string, da
 	if err != nil && !((compare || t.file.Conflicted) && errors.Is(err, os.ErrNotExist)) {
 		return nil, err
 	}
-	patch, err := repo.DiffSnapshots(ctx, old, next)
-	if err != nil || patch == "" {
-		return nil, err
+	patch := indexPatch
+	if patch == "" {
+		patch, err = repo.DiffSnapshots(ctx, old, next)
+		if err != nil || patch == "" {
+			return nil, err
+		}
 	}
 	a, err := highlighted(t.before.Path, old, dark)
 	if err != nil {
@@ -348,7 +375,7 @@ func previewLines(ctx context.Context, dir string, t fileTarget, mode string, da
 		return nil, err
 	}
 	var rows []previewRow
-	ai, bi := 0, 0
+	ai, bi, hunk := 0, 0, 0
 	inHunk := false
 	for _, line := range strings.Split(patch, "\n") {
 		if m := hunkStart.FindStringSubmatch(line); m != nil {
@@ -356,7 +383,10 @@ func previewLines(ctx context.Context, dir string, t fileTarget, mode string, da
 			bi, _ = strconv.Atoi(m[2])
 			inHunk = true
 			header := codeLine{kind: '@', spans: []codeSpan{{text: line}}, width: len(line)}
-			rows = append(rows, previewRow{header, header})
+			if indexPatch != "" {
+				hunk++
+			}
+			rows = append(rows, previewRow{left: header, right: header, hunk: hunk})
 			continue
 		}
 		if !inHunk || line == "" {

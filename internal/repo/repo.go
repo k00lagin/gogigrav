@@ -21,6 +21,10 @@ func Run(ctx context.Context, dir, tool string, args ...string) (string, error) 
 }
 
 func run(ctx context.Context, dir, tool, input string, args ...string) (string, error) {
+	return runCommand(ctx, dir, tool, input, false, args...)
+}
+
+func runCommand(ctx context.Context, dir, tool, input string, diffExit bool, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, executable(tool), args...)
 	hideConsole(cmd)
 	cmd.Dir = dir
@@ -34,6 +38,10 @@ func run(ctx context.Context, dir, tool, input string, args ...string) (string, 
 	if err := cmd.Run(); err != nil {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
+		}
+		var exit *exec.ExitError
+		if diffExit && errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return out.String(), nil
 		}
 		if errors.Is(err, exec.ErrNotFound) {
 			return "", fmt.Errorf("%s is missing from PATH", tool)
@@ -434,20 +442,24 @@ func ChangedPaths(ctx context.Context, dir string, c Commit) ([]File, error) {
 }
 
 func ChangeIndex(ctx context.Context, dir string, f File, stage, unborn bool) error {
+	paths := []string{f.Path}
+	// A staged rename already removed the source from the index. Only include it
+	// when undoing that rename, or when staging a worktree rename.
+	if f.From != "" && ((!stage && f.Index == 'R') || (stage && f.Work == 'R')) {
+		paths = append(paths, f.From)
+	}
+	return ChangeIndexPaths(ctx, dir, paths, stage, unborn)
+}
+
+func ChangeIndexPaths(ctx context.Context, dir string, paths []string, stage, unborn bool) error {
 	args := []string{"add", "-A"}
 	if !stage {
 		if unborn {
-			args = []string{"rm", "--cached", "-f"}
+			args = []string{"rm", "-r", "--cached", "-f"}
 		} else {
 			args = []string{"restore", "--staged"}
 		}
 	}
-	args = append(args, "--", f.Path)
-	// A staged rename already removed the source from the index. Only include it
-	// when undoing that rename, or when staging a worktree rename.
-	if f.From != "" && ((!stage && f.Index == 'R') || (stage && f.Work == 'R')) {
-		args = append(args, f.From)
-	}
-	_, err := Run(ctx, dir, "git", args...)
+	_, err := Run(ctx, dir, "git", append(append(args, "--"), paths...)...)
 	return err
 }
