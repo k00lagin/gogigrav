@@ -2,7 +2,10 @@ package repo
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
+	"strings"
+	"time"
 )
 
 func Pull(ctx context.Context, dir, remote, branch string, rebase bool) error {
@@ -18,6 +21,26 @@ func Pull(ctx context.Context, dir, remote, branch string, rebase bool) error {
 	}
 	_, err := Run(ctx, dir, "git", args...)
 	return err
+}
+
+// FetchBranch returns the commit fetched from an exact remote branch.
+func FetchBranch(ctx context.Context, dir, remote, branch string) (string, error) {
+	if err := checkBranch(ctx, dir, branch); err != nil {
+		return "", err
+	}
+	// FETCH_HEAD and remote-tracking refs may be overwritten by another fetch.
+	ref := "refs/gogigrav/fetch/" + rand.Text()
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_, _ = Run(cleanup, dir, "git", "update-ref", "-d", ref)
+	}()
+	if _, err := Run(ctx, dir, "git", "fetch", "--no-write-fetch-head", "--no-tags", "--no-recurse-submodules",
+		"--", remote, LocalRefPrefix+branch+":"+ref); err != nil {
+		return "", fmt.Errorf("fetch %s/%s: %w", remote, branch, err)
+	}
+	hash, err := Run(ctx, dir, "git", "rev-parse", "--verify", ref+"^{commit}")
+	return strings.TrimSpace(hash), err
 }
 
 func Push(ctx context.Context, dir, remote, source, target string, setUpstream, forceWithLease bool) error {

@@ -380,6 +380,127 @@ func TestStatusBranchAndSyncWithDifferentlyNamedUpstream(t *testing.T) {
 	}
 }
 
+func TestResetToRemoteRequiresConfirmationAndAnExistingRemoteBranch(t *testing.T) {
+	dir, remote, other := t.TempDir(), t.TempDir(), t.TempDir()
+	testGit(t, remote, "init", "--bare", "-b", "deployment")
+	testGit(t, dir, "init", "-b", "main")
+	testGit(t, dir, "config", "user.name", "Tester")
+	testGit(t, dir, "config", "user.email", "tester@example.test")
+	testGit(t, dir, "config", "commit.gpgsign", "false")
+	testGit(t, dir, "config", "core.autocrlf", "false")
+	write := func(name, contents string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("tracked.txt", "root\n")
+	testGit(t, dir, "add", "tracked.txt")
+	testGit(t, dir, "commit", "-m", "Root")
+	testGit(t, dir, "remote", "add", "team", remote)
+	testGit(t, dir, "push", "-u", "team", "main:deployment")
+	testGit(t, other, "clone", remote, ".")
+	testGit(t, dir, "fetch", "team")
+	oldRemoteHead := testGit(t, dir, "rev-parse", "team/deployment")
+	testGit(t, other, "-c", "user.name=Tester", "-c", "user.email=tester@example.test",
+		"-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Remote commit")
+	testGit(t, other, "push", "origin", "deployment")
+	newRemoteHead := testGit(t, other, "rev-parse", "HEAD")
+	testGit(t, dir, "commit", "--allow-empty", "-m", "Local commit")
+	localHead := testGit(t, dir, "rev-parse", "HEAD")
+	write("tracked.txt", "staged\n")
+	testGit(t, dir, "add", "tracked.txt")
+	write("tracked.txt", "unstaged\n")
+	write("untracked.txt", "keep\n")
+
+	w := testWorkbench(t, dir)
+	win := w.ui.Window()
+	key := func(k event.Key) {
+		win.HandleEvent(event.NewKeyEvent(event.KeyPress, k, 0, event.ModNone))
+	}
+	openConfirmation := func() {
+		t.Helper()
+		testToolbarAction(t, w, "Pull options")
+		field, ok := win.Context().FocusedWidget().(*textfield.Widget)
+		if !ok || field.Text() != "deployment" {
+			t.Fatal("Pull options should default to the upstream branch")
+		}
+		w.ui.Frame()
+		win.DrawOverlays(&uitest.MockCanvas{})
+		var reset *button.Widget
+		walkWidgets(win.OverlayContentWidgets()[0], func(node widget.Widget) {
+			btn, ok := node.(*button.Widget)
+			if !ok {
+				return
+			}
+			canvas := &uitest.MockCanvas{}
+			btn.Draw(win.Context(), canvas)
+			for _, call := range canvas.Texts {
+				if call.Text == "Reset to remote…" {
+					if call.Color != w.theme.Colors.Error {
+						t.Fatal("Reset to remote should use the error color")
+					}
+					reset = btn
+				}
+			}
+		})
+		if reset == nil {
+			t.Fatal("Pull options has no Reset to remote button")
+		}
+		testClick(w, reset.ScreenBounds().Center())
+		testApplyPopupAction(t, w)
+		if w.busy || w.openPopup != nil || win.OverlayCount() != 1 {
+			t.Fatal("Reset to remote should wait in a modal confirmation")
+		}
+	}
+
+	openConfirmation()
+	key(event.KeyEnter)
+	if w.busy || win.HasOverlays() || testGit(t, dir, "rev-parse", "team/deployment") != oldRemoteHead {
+		t.Fatal("default confirmation action should cancel without fetching")
+	}
+
+	openConfirmation()
+	key(event.KeyTab)
+	key(event.KeyEnter)
+	testWaitForGit(t, w)
+	if w.data.Head != newRemoteHead || w.data.CurrentBranch() != "main" || len(w.data.Stashes) != 1 {
+		t.Fatalf("reset resulted in HEAD=%s branch=%s stashes=%v", w.data.Head, w.data.Branch, w.data.Stashes)
+	}
+	if got := testGit(t, dir, "status", "--porcelain"); got != "?? untracked.txt" {
+		t.Fatalf("status after reset = %q", got)
+	}
+	if got := testGit(t, dir, "rev-parse", "ORIG_HEAD"); got != localHead {
+		t.Fatalf("ORIG_HEAD after reset = %s, want %s", got, localHead)
+	}
+	if staged, unstaged := testGit(t, dir, "show", "stash@{0}^2:tracked.txt"),
+		testGit(t, dir, "show", "stash@{0}:tracked.txt"); staged != "staged" || unstaged != "unstaged" {
+		t.Fatalf("stash saved index=%q and working file=%q", staged, unstaged)
+	}
+
+	testGit(t, remote, "update-ref", "-d", "refs/heads/deployment")
+	testGit(t, dir, "commit", "--allow-empty", "-m", "Keep this local commit")
+	w.refresh(w.filter)
+	testWaitForGit(t, w)
+	localHead = w.data.Head
+	write("tracked.txt", "keep this change\n")
+	openConfirmation()
+	key(event.KeyTab)
+	key(event.KeyEnter)
+	select {
+	case apply := <-w.done:
+		apply()
+	case <-time.After(15 * time.Second):
+		t.Fatal("timed out waiting for failed fetch")
+	}
+	if !strings.Contains(w.status, "couldn't find remote ref refs/heads/deployment") {
+		t.Fatalf("missing branch should report a fetch error, got %q", w.status)
+	}
+	if w.data.Head != localHead || len(w.data.Stashes) != 1 || testGit(t, dir, "status", "--porcelain") != "M tracked.txt\n?? untracked.txt" {
+		t.Fatal("reset changed the repository after the fetch failed")
+	}
+}
+
 func TestStashesMenuActions(t *testing.T) {
 	dir := t.TempDir()
 	testGit(t, dir, "init", "-b", "main")

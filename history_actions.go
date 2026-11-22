@@ -166,7 +166,7 @@ func checkHistoryHead(ctx context.Context, path, branch, hash string) error {
 			return err
 		}
 		if strings.TrimSpace(got) != hash {
-			return errors.New("HEAD changed. Reopen the commit menu and try again")
+			return errors.New("HEAD changed. Reopen the action and try again")
 		}
 	}
 	return nil

@@ -442,8 +442,7 @@ func (w *workbench) syncOptionsPanel(push bool) (widget.Widget, widget.Widget) {
 		flags = append(flags, w.check("Rebase instead of merge", rebase, true, func(on bool) { rebase = on }))
 	}
 	message := state.NewSignal("")
-	submit := func(target string) {
-		target = strings.TrimSpace(target)
+	withTarget := func(target string, action func(remote, target string)) {
 		if remote == "" {
 			message.Set("Select a remote.")
 			return
@@ -452,7 +451,11 @@ func (w *workbench) syncOptionsPanel(push bool) (widget.Widget, widget.Widget) {
 			message.Set(err.Error())
 			return
 		}
-		w.selectPopupAction(func() {
+		selectedRemote := remote
+		w.selectPopupAction(func() { action(selectedRemote, target) })
+	}
+	submit := func(target string) {
+		withTarget(strings.TrimSpace(target), func(remote, target string) {
 			if push {
 				w.pushBranch(remote, current, target, track, force)
 			} else {
@@ -467,12 +470,62 @@ func (w *workbench) syncOptionsPanel(push bool) (widget.Widget, widget.Widget) {
 		w.muted("Remote branch"), compactInput(dest),
 	}
 	children = append(children, flags...)
-	children = append(children, row(
-		primitives.Expanded(w.text("").Color(w.theme.Colors.Error).ContentSignal(message)),
-		w.btn(label, button.Filled, true, func() { submit(dest.Text()) }),
-	))
+	errorText := w.text("").Color(w.theme.Colors.Error).ContentSignal(message)
+	footer := []widget.Widget{primitives.Expanded(errorText)}
+	if !push {
+		path, head := w.path, w.data.Head
+		painter, theme := w.paint.Button, *w.theme
+		theme.Colors.Primary = theme.Colors.Error
+		painter.Theme = &theme
+		reset := button.New(button.TextOpt("Reset to remote…"), button.VariantOpt(button.TextOnly),
+			button.SizeOpt(button.Small), button.PainterOpt(painter),
+			button.Disabled(w.busy || current == "" || head == ""), button.OnClick(func() {
+				withTarget(strings.TrimSpace(dest.Text()), func(remote, target string) {
+					w.confirmResetToRemote(path, current, head, remote, target)
+				})
+			}))
+		children = append(children, errorText)
+		footer = []widget.Widget{reset, primitives.Expanded(primitives.Box())}
+	}
+	footer = append(footer, w.btn(label, button.Filled, true, func() { submit(dest.Text()) }))
+	children = append(children, row(footer...))
 	return primitives.VBox(children...).Width(320).Padding(12).Gap(6).CrossAlign(primitives.CrossAxisStretch), dest
 }
+
+func (w *workbench) confirmResetToRemote(path, branch, head, remote, target string) {
+	destination := remote + "/" + target
+	title := "Reset " + branch + " to " + destination
+	details := primitives.VBox(
+		w.text(fmt.Sprintf("Reset local branch %q to %q?", branch, destination)),
+		w.text("Local commits absent from the remote branch will be removed from this branch. Staged and unstaged changes to tracked files will be saved in a Git stash. Untracked files in the way of the reset may be deleted."),
+	).Gap(8).CrossAlign(primitives.CrossAxisStretch)
+	dialog.New(dialog.Title("Reset to remote?"), dialog.Content(details), dialog.Actions(
+		dialog.Action{Label: "Cancel", Default: true, Variant: dialog.VariantTextOnly},
+		dialog.Action{Label: "Reset to remote", Variant: dialog.VariantFilled, OnClick: func() {
+			if w.busy || w.path != path {
+				return
+			}
+			w.changeRepository(title, func(ctx context.Context) error {
+				if err := checkHistoryRewrite(ctx, path, branch, head); err != nil {
+					return err
+				}
+				commit, err := repo.FetchBranch(ctx, path, remote, target)
+				if err != nil {
+					return err
+				}
+				if err := checkHistoryRewrite(ctx, path, branch, head); err != nil {
+					return err
+				}
+				if err := saveResetChanges(ctx, path); err != nil {
+					return err
+				}
+				_, err = repo.Run(ctx, path, "git", "reset", "--hard", "--no-recurse-submodules", commit)
+				return err
+			})
+		}},
+	), dialog.PainterOpt(w.paint.Dialog)).Show(w.ui.Window().Context())
+}
+
 func (w *workbench) addRemoteForm() {
 	if w.busy || w.path == "" {
 		return
