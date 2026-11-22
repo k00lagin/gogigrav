@@ -77,8 +77,32 @@ func (p fileTreePainter) PaintLabel(canvas widget.Canvas, state treeview.LabelSt
 			p.paintFileLabel(canvas, state, item)
 			return
 		}
+		if !state.Node.IsLeaf() {
+			p.paintFolderLabel(canvas, state)
+			return
+		}
 	}
 	p.TreeViewPainter.PaintLabel(canvas, state)
+}
+
+func (p fileTreePainter) paintFolderLabel(canvas widget.Canvas, state treeview.LabelState) {
+	const iconSize, gap = 16, 5
+	bounds := state.Bounds
+	if bounds.IsEmpty() || bounds.Width() <= iconSize+gap {
+		p.TreeViewPainter.PaintLabel(canvas, state)
+		return
+	}
+	fg := p.Theme.Colors.OnSurface
+	iconColor := p.Theme.Colors.OnSurfaceSecondary
+	if state.Disabled {
+		fg = p.Theme.Colors.OnSurfaceDisabled
+		iconColor = p.Theme.Colors.OnSurfaceDisabled
+	}
+	icon.Draw(canvas, icon.ExpFolder, geometry.NewRect(bounds.Min.X, bounds.Center().Y-iconSize/2, iconSize, iconSize), iconColor)
+	bounds.Min.X += iconSize + gap
+	canvas.PushClip(bounds)
+	canvas.DrawText(state.Text, bounds, 13, fg, false, widget.TextAlignLeft)
+	canvas.PopClip()
 }
 
 func (p fileTreePainter) paintFileLabel(canvas widget.Canvas, state treeview.LabelState, item *fileItem) {
@@ -103,13 +127,14 @@ func (p fileTreePainter) paintFileLabel(canvas widget.Canvas, state treeview.Lab
 		right = statusBounds.Min.X - 4
 	}
 	if stat.Text {
+		const statGap = 6
 		added := "+" + strconv.Itoa(stat.Added)
 		deleted := "−" + strconv.Itoa(stat.Deleted)
 		addedWidth, deletedWidth := canvas.MeasureText(added, 12, false), canvas.MeasureText(deleted, 12, false)
-		if right-addedWidth-deletedWidth > bounds.Min.X+iconSize+gap+20 {
+		if right-addedWidth-statGap-deletedWidth > bounds.Min.X+iconSize+gap+20 {
 			right -= deletedWidth
 			canvas.DrawText(deleted, geometry.NewRect(right, bounds.Min.Y, deletedWidth, bounds.Height()), 12, p.colors['D'], false, widget.TextAlignLeft)
-			right -= addedWidth
+			right -= statGap + addedWidth
 			canvas.DrawText(added, geometry.NewRect(right, bounds.Min.Y, addedWidth, bounds.Height()), 12, p.colors['A'], false, widget.TextAlignLeft)
 		}
 	}

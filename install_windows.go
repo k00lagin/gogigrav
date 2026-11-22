@@ -82,12 +82,12 @@ func (i installation) install() (result error) {
 	if !samePath(i.current, i.target) {
 		file, err := stageCopy(i.current, filepath.Dir(i.target))
 		if err != nil {
-			return fmt.Errorf("подготовка Gogigrav.exe: %w", err)
+			return fmt.Errorf("stage Gogigrav.exe: %w", err)
 		}
 		defer os.Remove(file)
 		change, err := replaceStaged(file, i.target)
 		if err != nil {
-			return fmt.Errorf("замена Gogigrav.exe: %w", err)
+			return fmt.Errorf("replace Gogigrav.exe: %w", err)
 		}
 		finish = append(finish, change)
 	}
@@ -100,7 +100,7 @@ func (i installation) install() (result error) {
 	link := filepath.Join(dir, "Gogigrav.lnk")
 	defer os.Remove(link)
 	if err := createShortcut(link, i.target); err != nil {
-		return fmt.Errorf("создание ярлыка в меню «Пуск»: %w", err)
+		return fmt.Errorf("create Start menu shortcut: %w", err)
 	}
 	change, err := replaceStaged(link, i.shortcut)
 	if err != nil {
@@ -263,7 +263,7 @@ func replaceStaged(staged, target string) (func(bool) error, error) {
 	var backup string
 	if info, err := os.Lstat(target); err == nil {
 		if !info.Mode().IsRegular() {
-			return nil, fmt.Errorf("%s не является обычным файлом", target)
+			return nil, fmt.Errorf("%s is not a regular file", target)
 		}
 		backup, err = stageCopy(target, filepath.Dir(target))
 		if err != nil {

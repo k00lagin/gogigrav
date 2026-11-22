@@ -83,6 +83,10 @@ func (w *workbench) openAnchoredPopup(trigger popupAnchor, id string, anchor fun
 	if alreadyOpen || w.busy {
 		return
 	}
+	restoreFocusVisible := false
+	if fv, ok := trigger.(interface{ IsFocusVisible() bool }); ok {
+		restoreFocusVisible = fv.IsFocusVisible()
+	}
 
 	popup := popover.NewPopover(
 		popover.AnchorBounds(anchor),
@@ -98,6 +102,11 @@ func (w *workbench) openAnchoredPopup(trigger popupAnchor, id string, anchor fun
 			w.popupAnchor = nil
 			w.popupLayer = nil
 			ctx.RequestFocus(trigger)
+			if !restoreFocusVisible {
+				if fv, ok := trigger.(interface{ SetFocusVisible(bool) }); ok {
+					fv.SetFocusVisible(false)
+				}
+			}
 			trigger.SetNeedsRedraw(true)
 			ctx.InvalidateRect(trigger.ScreenBounds())
 		}),
@@ -166,7 +175,7 @@ func (w *workbench) repositoriesPopup(bar *toolbarHints, index int) {
 	recent, others := w.prefs.repositoryGroups(time.Now())
 	appendChoices(recent, true)
 	appendChoices(others, false)
-	add := w.dropdownActionButton(icon.Add, "Add repository…", true, func() {
+	add := w.dropdownActionButton(icon.ExpAdd, "Add repository…", true, func() {
 		w.selectPopupAction(w.showRepositoryPicker)
 	})
 	content, focus := w.searchChoicePanel(380, 44, "Search repositories or paste a path", choices, w.repositorySearch(icons), add)
@@ -310,7 +319,7 @@ func (w *workbench) searchChoicePanel(width, rowHeight float32, placeholder stri
 					if item.Selected {
 						checkColor = w.theme.Colors.OnSurface
 					}
-					check := icon.NewIcon(icon.Check, icon.Size(14), icon.Color(checkColor))
+					check := icon.NewIcon(icon.ExpCheck, icon.Size(14), icon.Color(checkColor))
 					items = append(items, primitives.VBox(check).Width(14).Height(14))
 				}
 				return row(items...).Gap(10).Height(rowHeight).PaddingXY(8, 0)

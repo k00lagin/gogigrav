@@ -32,7 +32,7 @@ type repositoryLocation struct {
 func repositoryLocationFor(text string) (repositoryLocation, error) {
 	path := repositoryQuery(text)
 	if path == "" {
-		return repositoryLocation{}, errors.New("Enter a repository path")
+		return repositoryLocation{}, errors.New("Enter a repository path.")
 	}
 	exact := path == "~" || os.IsPathSeparator(path[len(path)-1])
 	if path == "~" || len(path) > 1 && path[0] == '~' && os.IsPathSeparator(path[1]) {
@@ -123,8 +123,10 @@ const repositoryPickerHelp = "↑↓ Select · Enter Browse · Backspace Parent 
 const repositoryPickerWidth = 640
 const pickerInset = 13
 
-var parentFolderIcon = icon.FromSVG("parent_folder", 16,
-	"M2 3H6L8 5H14V13H2ZM8 6L5 9H7V12H9V9H11Z")
+var parentFolderIcon = icon.FromSVGXML("parent_folder", []byte(`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M8.10584 4.34613L8.25344 4.5H13C13.8284 4.5 14.5 5.17157 14.5 6V12.1333C14.5 12.9529 13.932 13.5 13.3667 13.5H2.63333C2.06804 13.5 1.5 12.9529 1.5 12.1333V3.86667C1.5 3.04707 2.06804 2.5 2.63333 2.5H6.1217C6.25792 2.5 6.38824 2.55557 6.48253 2.65387L8.10584 4.34613Z" stroke="#6C707E"/>
+<path d="M8 11.25V7M8 7L5.75 9.25M8 7L10.25 9.25" stroke="#6C707E" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`))
 
 func (w *workbench) showRepositoryPicker() {
 	if w.busy {
@@ -147,13 +149,10 @@ func (w *workbench) showRepositoryPicker() {
 	p.field = w.input("Repository path", directoryPath(initial), p.browse, nil)
 	p.list = primitives.VBox().CrossAlign(primitives.CrossAxisStretch)
 	p.view = scrollview.New(p.list, scrollview.ScrollYSignal(p.scroll), scrollview.PainterOpt(w.paint.Scrollbar))
-	header := row(primitives.Expanded(w.text("Add Repository").Bold().FontSize(15)),
-		w.btn("×", button.TextOnly, true, func() { p.dialog.Close(ctx) })).Height(44).PaddingXY(pickerInset, 0)
-	up := button.New(button.TextOpt("Parent folder"), button.A11yHint("Parent folder (Backspace)"),
-		button.SizeOpt(button.Small), button.VariantOpt(button.TextOnly),
-		button.DisabledFn(func() bool { return w.busy || p.parent == "" }),
-		button.PainterOpt(folderUpPainter{searchButtonPainter{w.paint.Button, parentFolderIcon}}),
-		button.OnClick(func() { p.navigate(p.parent) })).MaxWidth(28)
+	header := w.dialogHeader("Add repository", func() { p.dialog.Close(ctx) }).Height(44).PaddingXY(pickerInset, 0)
+	up := w.iconButton(parentFolderIcon, "Parent folder (Backspace)", 28, 16,
+		func() bool { return w.busy || p.parent == "" },
+		func() { p.navigate(p.parent) })
 	controls := row(primitives.Expanded(compactInput(p.field)),
 		up,
 		p.button("Add", "Add path (Ctrl+Enter)", button.Filled,
@@ -176,13 +175,6 @@ func (w *workbench) showRepositoryPicker() {
 	ctx.RequestFocus(p.field)
 	p.field.Event(ctx, event.NewKeyEvent(event.KeyPress, event.KeyEnd, 0, event.ModNone))
 	p.browse(p.field.Text())
-}
-
-type folderUpPainter struct{ searchButtonPainter }
-
-func (p folderUpPainter) PaintButton(canvas widget.Canvas, state button.PaintState) {
-	state.Text = ""
-	p.searchButtonPainter.PaintButton(canvas, state)
 }
 
 func (p *repositoryPicker) button(label, hint string, style button.Variant, disabled func() bool, action func()) *button.Widget {

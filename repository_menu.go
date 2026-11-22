@@ -47,7 +47,7 @@ func (w *workbench) repositoryMenu(path string, at geometry.Point) {
 				w.showError(err)
 			}
 		}),
-		menu.Item("Copy Path", "", func() { widget.ClipboardWrite(path) }),
+		menu.Item("Copy path", "", func() { widget.ClipboardWrite(path) }),
 		menu.Sep(),
 		menu.Item("Remove from list", "", func() { w.removeRecentRepository(path) }),
 	}, menu.ContextPainterOpt(w.paint.Menu)).Show(w.ui.Window().Context(), at)
@@ -140,7 +140,7 @@ func (w *workbench) repositorySearch(icons *repositoryIconGallery) func(string, 
 						choice.contextMenu = func(at geometry.Point) { w.repositoryMenu(root, at) }
 					} else {
 						choice.leading = func() widget.Widget {
-							return row(icon.NewIcon(icon.Add, icon.Size(14), icon.Color(w.theme.Colors.OnSurfaceSecondary)),
+							return row(icon.NewIcon(icon.ExpAdd, icon.Size(14), icon.Color(w.theme.Colors.OnSurfaceSecondary)),
 								icons.repository(root)).Gap(6)
 						}
 					}
@@ -152,7 +152,7 @@ func (w *workbench) repositorySearch(icons *repositoryIconGallery) func(string, 
 				return func() { publish([]popupChoice{{label: "No Git repository at this path", empty: true}}) }, nil
 			}
 			return func() {
-				init := popupChoice{label: "Initialize " + filepath.Base(path), detail: path, glyph: icon.Add, action: func() {
+				init := popupChoice{label: "Initialize " + filepath.Base(path), detail: path, glyph: icon.ExpAdd, action: func() {
 					w.job("Initialize repository", func(ctx context.Context) (func(), error) {
 						if root, err := repo.Root(ctx, path); err == nil {
 							return func() { w.open(root) }, nil

@@ -103,11 +103,7 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 				change(i)
 				apply()
 			}))
-		width := float32(72)
-		for _, option := range labels {
-			width = max(width, float32(len(option))*7+44)
-		}
-		return row(label(title), primitives.VBox(picker).Width(width).Height(28))
+		return row(label(title), primitives.VBox(picker).Width(dropdownWidth(labels)).Height(28))
 	}
 	section := func(name string, children ...widget.Widget) widget.Widget {
 		return primitives.VBox(append([]widget.Widget{muted(strings.ToUpper(name)).FontSize(10).Bold()}, children...)...).
@@ -189,7 +185,7 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 		}
 	})
 	theme := section("Theme",
-		row(label("Colour theme"), primitives.Expanded(primitives.VBox(picker).Height(28).CrossAlign(primitives.CrossAxisStretch)), importTheme),
+		row(label("Color theme"), primitives.Expanded(primitives.VBox(picker).Height(28).CrossAlign(primitives.CrossAxisStretch)), importTheme),
 		hint("Import workbench colors from a VS Code JSON or JSONC theme."),
 	)
 	remote := section("Remote",
@@ -211,8 +207,8 @@ func (w *workbench) settingsDialog(identity repo.Identity) {
 	if setup := w.installationControl(); setup != nil {
 		content.AddChild(section("Application", row(setup)))
 	}
-	closeButton := w.btn("×", button.TextOnly, true, func() { window.Close(ctx) })
-	header := row(primitives.Expanded(text("Settings").Bold().FontSize(15)), closeButton).Height(43).PaddingXY(12, 4)
+	closeButton := w.dialogCloseButton(func() { window.Close(ctx) })
+	header := row(primitives.Expanded(text("Settings").Bold().FontSize(15)), closeButton).Height(44).PaddingXY(16, 0)
 	body := scrollview.New(content, scrollview.PainterOpt(w.paint.Scrollbar))
 	window = dialog.New(dialog.ContentOnly(), dialog.Content(primitives.VBox(header, separator, body).CrossAlign(primitives.CrossAxisStretch)),
 		dialog.MaxWidth(550), dialog.MaxHeight(720), dialog.PainterOpt(w.paint.Dialog), dialog.OnClose(func() {
@@ -309,12 +305,16 @@ func (w *workbench) editIdentity(identity repo.Identity, onSave func(repo.Identi
 			return func() { onSave(saved) }, err
 		})
 	}
-	panel := primitives.VBox(w.text("Repository user").Bold().FontSize(15),
+	panel := primitives.VBox(
+		w.dialogHeader("Repository user", func() { editor.Close(ctx) }),
+		line(w),
 		w.muted("Name"), compactInput(name), w.muted("Email"), compactInput(email),
 		w.text("").ContentSignal(message).Color(w.theme.Colors.Error),
+		line(w),
 		row(primitives.Expanded(primitives.Box()), w.btn("Cancel", button.TextOnly, true, func() { editor.Close(ctx) }),
-			w.btn("Save", button.Filled, true, save))).Gap(6).Padding(16)
-	editor = dialog.New(dialog.ContentOnly(), dialog.Content(panel), dialog.MaxWidth(400), dialog.PainterOpt(w.paint.Dialog),
+			w.btn("Save", button.Filled, true, save)),
+	).Width(420).Gap(8).Padding(16).CrossAlign(primitives.CrossAxisStretch)
+	editor = dialog.New(dialog.ContentOnly(), dialog.Content(panel), dialog.MaxWidth(420), dialog.PainterOpt(w.paint.Dialog),
 		dialog.OnClose(func() {
 			if previousFocus != nil && !widget.IsDetached(previousFocus) {
 				ctx.RequestFocus(previousFocus)

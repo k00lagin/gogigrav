@@ -79,7 +79,7 @@ func (w *workbench) formDialog(opts formDialogOptions) {
 	}
 	fieldWidgets, sync, focusTarget := w.buildFormFields(opts.fields, func() { message.Set("") }, submit)
 	syncFields = sync
-	children := []widget.Widget{w.text(opts.title).Bold().FontSize(15), line(w)}
+	children := []widget.Widget{w.dialogHeader(opts.title, func() { editor.Close(ctx) }), line(w)}
 	if opts.description != "" {
 		children = append(children, w.muted(opts.description).MaxLines(3))
 	}
@@ -208,13 +208,13 @@ func (w *workbench) initRepositoryForm(initial string) {
 	}
 	dir := &formField{label: "Directory", value: trimmed}
 	w.formDialog(formDialogOptions{
-		title:  "Initialize Git Repository",
+		title:  "Initialize Git repository",
 		submit: "Initialize",
 		fields: []*formField{dir},
 		onSubmit: func() (func(), error) {
 			dst := strings.TrimSpace(dir.value)
 			if dst == "" {
-				return nil, errors.New("enter an existing directory")
+				return nil, errors.New("Enter an existing directory.")
 			}
 			dst, err := filepath.Abs(dst)
 			if err != nil {
@@ -248,7 +248,7 @@ func (w *workbench) cloneForm(path string) {
 		onSubmit: func() (func(), error) {
 			name, dst := strings.TrimSpace(slug.value), strings.TrimSpace(dir.value)
 			if !slugPattern.MatchString(name) || dst == "" {
-				return nil, errors.New("enter owner/name and a destination folder")
+				return nil, errors.New("Enter owner/name and a destination folder.")
 			}
 			dst, err := filepath.Abs(dst)
 			if err != nil {
@@ -282,7 +282,7 @@ func (w *workbench) publishForm() {
 		onSubmit: func() (func(), error) {
 			name := strings.TrimSpace(slug.value)
 			if !slugPattern.MatchString(name) {
-				return nil, errors.New("enter a GitHub repository as owner/name")
+				return nil, errors.New("Enter a GitHub repository as owner/name.")
 			}
 			vis := strings.ToLower(visibility.value)
 			return func() {
@@ -300,7 +300,7 @@ func (w *workbench) checkGitHub() {
 }
 func validName(name string) error {
 	if strings.TrimSpace(name) == "" || strings.HasPrefix(name, "-") {
-		return errors.New("enter a name that does not start with a dash")
+		return errors.New("Enter a name that does not start with a dash.")
 	}
 	return nil
 }
@@ -332,14 +332,15 @@ func (w *workbench) branchAt(ref string) {
 	}
 	name := w.input("feature/my-branch", "", func(string) { message.Set("") }, submit)
 	panel := primitives.VBox(
-		w.text("Create Branch").Bold().FontSize(15),
+		w.dialogHeader("Create branch", func() { editor.Close(ctx) }),
 		line(w), w.muted("From commit "+ref[:min(8, len(ref))]),
 		w.muted("Branch name"), compactInput(name),
 		w.check("Check out after creating", true, true, func(on bool) { checkout = on }),
 		w.text("").ContentSignal(message).Color(w.theme.Colors.Error),
+		line(w),
 		row(primitives.Expanded(primitives.Box()),
 			w.btn("Cancel", button.TextOnly, true, func() { editor.Close(ctx) }),
-			w.btn("Create Branch", button.Filled, true, func() { submit(name.Text()) })),
+			w.btn("Create branch", button.Filled, true, func() { submit(name.Text()) })),
 	).Width(460).Gap(8).Padding(16).CrossAlign(primitives.CrossAxisStretch)
 	editor = dialog.New(dialog.ContentOnly(), dialog.Content(panel), dialog.MaxWidth(460), dialog.PainterOpt(w.paint.Dialog),
 		dialog.OnClose(func() {
@@ -363,9 +364,9 @@ func (w *workbench) tagAt(ref string) {
 	}
 	name := &formField{label: "Tag name"}
 	w.formDialog(formDialogOptions{
-		title:       "Create Tag",
+		title:       "Create tag",
 		description: "At commit " + ref[:min(8, len(ref))],
-		submit:      "Create Tag",
+		submit:      "Create tag",
 		fields:      []*formField{name},
 		onSubmit: func() (func(), error) {
 			value := strings.TrimSpace(name.value)
@@ -482,8 +483,8 @@ func (w *workbench) addRemoteForm() {
 	}
 	url := &formField{label: "Remote URL"}
 	w.formDialog(formDialogOptions{
-		title:  "Add Remote",
-		submit: "Add Remote",
+		title:  "Add remote",
+		submit: "Add remote",
 		fields: []*formField{name, url},
 		onSubmit: func() (func(), error) {
 			remoteName := strings.TrimSpace(name.value)
@@ -492,7 +493,7 @@ func (w *workbench) addRemoteForm() {
 			}
 			remoteURL := strings.TrimSpace(url.value)
 			if remoteURL == "" {
-				return nil, errors.New("enter a remote URL")
+				return nil, errors.New("Enter a remote URL.")
 			}
 			return func() { w.command("Add remote", "git", "remote", "add", "--", remoteName, remoteURL) }, nil
 		},
@@ -515,7 +516,7 @@ func (w *workbench) editRemoteForm(name string) {
 				onSubmit: func() (func(), error) {
 					next := strings.TrimSpace(url.value)
 					if next == "" {
-						return nil, errors.New("enter a remote URL")
+						return nil, errors.New("Enter a remote URL.")
 					}
 					return func() { w.command("Update remote", "git", "remote", "set-url", "--", name, next) }, nil
 				},

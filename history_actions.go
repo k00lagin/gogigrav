@@ -20,14 +20,14 @@ func (w *workbench) historyDialog(title, description, submit string, fields []*f
 	if w.busy {
 		return
 	}
-	content := []widget.Widget{w.text(title).Bold().FontSize(15), line(w)}
+	ctx := w.ui.Window().Context()
+	previous := ctx.FocusedWidget()
+	var editor *dialog.Widget
+	content := []widget.Widget{w.dialogHeader(title, func() { editor.Close(ctx) }), line(w)}
 	if description != "" {
 		content = append(content, w.text(description))
 	}
 	content = append(content, w.formFields(fields)...)
-	ctx := w.ui.Window().Context()
-	previous := ctx.FocusedWidget()
-	var editor *dialog.Widget
 	content = append(content, line(w), row(primitives.Expanded(primitives.Box()),
 		w.btn("Cancel", button.TextOnly, true, func() { editor.Close(ctx) }),
 		w.btn(submit, button.Filled, true, func() {
@@ -62,7 +62,7 @@ func (w *workbench) pickHistoryCommit(c repo.Commit, revert bool) {
 	}
 	origin := flagField("Record origin commit in message (-x)", false)
 	noCommit := flagField("Do not commit automatically (--no-commit)", false)
-	label, description := "Cherry Pick", c.Subject
+	label, description := "Cherry-pick", c.Subject
 	if revert {
 		label, description = "Revert", fmt.Sprintf("Create a new commit that reverts %q.", c.Subject)
 	} else {
@@ -229,7 +229,7 @@ func (w *workbench) dropHistoryCommit(c repo.Commit) {
 	parent := strings.Fields(c.Parents)[0]
 	title := "Drop commit " + c.Short()
 	description := fmt.Sprintf("%q will be removed from %q by rebasing later commits. Use this only for unpublished commits.", c.Subject, branch)
-	w.historyDialog(title+"?", description, "Drop Commit", nil, func() {
+	w.historyDialog(title+"?", description, "Drop commit", nil, func() {
 		w.changeRepository(title, func(ctx context.Context) error {
 			if err := checkHistoryRewrite(ctx, path, branch, head); err != nil {
 				return err

@@ -166,19 +166,23 @@ func (w *workbench) previewPanel() widget.Widget {
 			selected = i
 		}
 	}
-	controls := []widget.Widget{primitives.Expanded(w.pick("File", names, v.index, func(i int) { change(i, v.mode) })), w.pick("File view", modes, selected, func(i int) { change(v.index, modes[i]) })}
+	controls := []widget.Widget{
+		primitives.Expanded(w.pick("File", names, v.index, func(i int) { change(i, v.mode) })),
+		primitives.VBox(w.pick("File view", modes, selected, func(i int) { change(v.index, modes[i]) })).Width(dropdownWidth(modes)),
+	}
 	if v.mode == diffMode {
 		style := 0
 		if w.prefs.Settings.SplitDiff {
 			style = 1
 		}
-		controls = append(controls, w.pick("Diff layout", []string{"Unified", "Split"}, style, func(i int) {
+		diffLayouts := []string{"Unified", "Split"}
+		controls = append(controls, primitives.VBox(w.pick("Diff layout", diffLayouts, style, func(i int) {
 			w.prefs.Settings.SplitDiff = i == 1
 			w.prefs.save(w.settingsPath)
 			w.redraw()
-		}))
+		})).Width(dropdownWidth(diffLayouts)))
 	}
-	controls = append(controls, w.check("Wrap", w.previewWrap, true, func(b bool) { w.previewWrap = b; w.redraw() }), w.check("Files", w.previewSidebar, true, func(b bool) { w.previewSidebar = b; w.redraw() }), w.btn("Close", button.Outlined, true, w.closePreview))
+	controls = append(controls, w.check("Wrap", w.previewWrap, true, func(b bool) { w.previewWrap = b; w.redraw() }), w.check("Files", w.previewSidebar, true, func(b bool) { w.previewSidebar = b; w.redraw() }), w.dialogCloseButton(w.closePreview))
 	var content widget.Widget
 	switch {
 	case v.loading:
@@ -212,7 +216,7 @@ func (w *workbench) previewPanel() widget.Widget {
 	}
 	if w.previewSidebar {
 		side := w.fileSection("Files", "", v.files, v.unstaged, 0, state.NewSignal("Files/"+t.file.Path))
-		content = primitives.HBox(primitives.Expanded(content), primitives.VBox(side).Width(250)).CrossAlign(primitives.CrossAxisStretch)
+		content = primitives.HBox(primitives.Expanded(content), primitives.Box().Width(1).Background(w.theme.Colors.Border), primitives.VBox(side).Width(250)).CrossAlign(primitives.CrossAxisStretch)
 	}
 	describe := func(side repo.FileSide) string {
 		switch side.Revision {
@@ -235,7 +239,7 @@ func (w *workbench) previewPanel() widget.Widget {
 	case diffMode:
 		revision = describe(t.before) + "  →  " + describe(t.after)
 	}
-	return primitives.VBox(row(controls...).PaddingXY(8, 4), row(w.muted(revision), w.text(path)).PaddingXY(10, 2), line(w), primitives.Expanded(content)).Background(w.theme.Colors.Background)
+	return primitives.VBox(row(controls...).PaddingXY(8, 4), row(w.muted(revision), primitives.Expanded(w.text(path).MaxLines(1).Ellipsis())).PaddingXY(10, 2), line(w), primitives.Expanded(content)).Background(w.theme.Colors.Background)
 }
 
 type codeSpan struct {

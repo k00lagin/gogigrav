@@ -34,7 +34,7 @@ func (w *workbench) statusBar(hint state.Signal[string]) widget.Widget {
 				branch := shortRef(ref)
 				choice := popupChoice{label: branch, glyph: branchIcon}
 				if branch == w.data.CurrentBranch() {
-					choice.glyph, choice.current = icon.Check, true
+					choice.glyph, choice.current = icon.ExpCheck, true
 				} else {
 					choice.action = func() { w.switchBranch(ref) }
 				}
@@ -83,7 +83,7 @@ func (w *workbench) statusBar(hint state.Signal[string]) widget.Widget {
 		w.muted("").FontSize(12).ContentSignal(hint).MaxLines(1).Ellipsis())
 	if w.path != "" {
 		items = append(items, button.New(button.TextOpt("Load more"), button.VariantOpt(button.TextOnly), button.SizeOpt(button.Small),
-			button.DisabledSignal(w.loadMoreDisabled), button.PainterOpt(w.paint.Button),
+			button.DisabledSignal(w.loadMoreDisabled), button.PainterOpt(statusTextButtonPainter{w.paint.Button}),
 			button.OnClick(func() { f := w.filter; f.Limit += 250; w.refresh(f) })))
 	}
 	items = append(items, w.muted(w.path).FontSize(12).MaxLines(1).Ellipsis())
@@ -178,5 +178,35 @@ func (p statusButtonPainter) PaintButton(canvas widget.Canvas, s button.PaintSta
 		canvas.PushClip(text)
 		canvas.DrawText(label, text, 12, color, false, widget.TextAlignLeft)
 		canvas.PopClip()
+	}
+}
+
+type statusTextButtonPainter struct {
+	devtools.ButtonPainter
+}
+
+func (statusTextButtonPainter) ButtonHeight(button.Size) float32             { return 24 }
+func (statusTextButtonPainter) ButtonPadding(button.Size) (float32, float32) { return 6, 0 }
+func (statusTextButtonPainter) ButtonFontSize(button.Size) float32           { return 12 }
+
+func (p statusTextButtonPainter) PaintButton(canvas widget.Canvas, s button.PaintState) {
+	if s.Bounds.IsEmpty() {
+		return
+	}
+	cs := p.Theme.Colors
+	if !s.Disabled && (s.Hovered || s.Pressed) {
+		bg := cs.ControlHover
+		if s.Pressed {
+			bg = bg.Lerp(widget.ColorBlack, 0.10)
+		}
+		canvas.DrawRoundRect(s.Bounds, bg, 4)
+	}
+	fg := cs.OnSurface
+	if s.Disabled {
+		fg = cs.OnSurfaceDisabled
+	}
+	canvas.DrawText(s.Text, s.Bounds, 12, fg, false, widget.TextAlignCenter)
+	if s.Focused && !s.Disabled {
+		canvas.StrokeRoundRect(s.Bounds, cs.BorderFocus, 4, 1)
 	}
 }

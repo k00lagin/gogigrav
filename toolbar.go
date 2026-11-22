@@ -19,6 +19,7 @@ import (
 var toolbarSVG embed.FS
 
 const toolbarButtonWidth = 32
+const toolbarSplitOptionsWidth = 16
 const toolbarItemGap = 6
 const toolbarEndPadding = 4
 
@@ -62,7 +63,8 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 		chevron := icon.ExpChevronDown
 		chevron.Name = label + " options"
 		options := action(chevron.Name, chevron, enabled, func() { openAt(index + 1) })
-		options.Width = 20
+		options.Width = toolbarSplitOptionsWidth
+		options.Attached = true
 		items = append(items, action(syncLabel(label, count), glyph, enabled, func() {
 			w.syncBranch(push, func() { openAt(index) })
 		}), options)
@@ -99,8 +101,14 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 	)
 	bar = w.headerToolbar(hint, items)
 	if searching {
-		width := float32(toolbarEndPadding + (len(items)-1)*toolbarItemGap)
-		for _, item := range items[:len(items)-1] {
+		width := float32(toolbarEndPadding)
+		for i, item := range items {
+			if i > 0 && !item.Attached {
+				width += toolbarItemGap
+			}
+			if i == len(items)-1 {
+				continue
+			}
 			if item.Width > 0 {
 				width += item.Width
 			} else {
@@ -115,7 +123,7 @@ func (w *workbench) actionToolbar(hint state.Signal[string]) widget.Widget {
 
 func (w *workbench) headerToolbar(hint state.Signal[string], items []toolbar.Item) *toolbarHints {
 	painter := w.paint.Toolbar
-	painter.IconSize = 20
+	painter.IconSize = 16
 	bar := toolbar.New(toolbar.Items(items...), toolbar.Height(titleBarHeight),
 		toolbar.ButtonSize(toolbarButtonWidth), toolbar.ButtonHeight(32), toolbar.Gap(toolbarItemGap),
 		toolbar.PainterOpt(actionToolbarPainter{painter, w}))
@@ -184,16 +192,97 @@ type actionToolbarPainter struct {
 // The title bar draws the shared background and separator.
 func (p actionToolbarPainter) PaintToolbar(widget.Canvas, toolbar.PaintToolbarState) {}
 
+func (p actionToolbarPainter) splitPartnerIcon(item toolbar.PaintButtonState) string {
+	switch item.Icon.Name {
+	case pullIcon.Name:
+		return "Pull options"
+	case pushIcon.Name:
+		return "Push options"
+	case "Pull options":
+		return pullIcon.Name
+	case "Push options":
+		return pushIcon.Name
+	default:
+		return ""
+	}
+}
+
+func (p actionToolbarPainter) paintSplitButton(canvas widget.Canvas, item toolbar.PaintButtonState) {
+	bounds := item.Bounds
+	if bounds.IsEmpty() {
+		return
+	}
+	colors := p.Theme.Colors
+	const radius float32 = 4
+	selfActive := p.bench.popupIcon == item.Icon.Name
+	partner := p.splitPartnerIcon(item)
+	partnerActive := partner != "" && p.bench.popupIcon == partner
+	groupActive := item.GroupHovered || selfActive || partnerActive
+	if !item.Disabled && groupActive {
+		bg := colors.ControlFill
+		if item.Hovered || item.Pressed || selfActive {
+			bg = colors.ControlHover
+		}
+		pill := bounds
+		if item.JoinedRight {
+			pill.Max.X += radius
+		}
+		if item.JoinedLeft {
+			pill.Min.X -= radius
+		}
+		canvas.PushClip(bounds)
+		canvas.DrawRoundRect(pill, bg, radius)
+		canvas.PopClip()
+		if item.JoinedLeft {
+			x := bounds.Min.X + 0.5
+			canvas.DrawLine(
+				geometry.Pt(x, bounds.Min.Y+4),
+				geometry.Pt(x, bounds.Max.Y-4),
+				colors.BorderStrong.WithAlpha(0.6), 1,
+			)
+		}
+	}
+	fg := colors.OnSurface
+	if item.Disabled {
+		fg = colors.OnSurfaceDisabled
+	}
+	iconSize := p.IconSize
+	if iconSize <= 0 {
+		iconSize = 16
+	}
+	if item.JoinedLeft {
+		iconSize = 14
+	}
+	center := bounds.Center()
+	icon.Draw(canvas, item.Icon, geometry.NewRect(center.X-iconSize/2, center.Y-iconSize/2, iconSize, iconSize), fg)
+	if item.Focused && !item.Disabled {
+		canvas.StrokeRoundRect(bounds, colors.BorderFocus, radius, 1)
+	}
+}
+
 func (p actionToolbarPainter) PaintButtonItem(canvas widget.Canvas, item toolbar.PaintButtonState) {
 	if !item.ShowLabel {
+		if item.JoinedLeft || item.JoinedRight {
+			p.paintSplitButton(canvas, item)
+			return
+		}
 		item.Hovered = item.Hovered || p.bench.popupIcon == item.Icon.Name
 		p.ToolbarPainter.PaintButtonItem(canvas, item)
 		return
 	}
 	colors := p.Theme.Colors
 	bounds := item.Bounds
-	if item.Hovered || p.bench.popupIcon == item.Icon.Name {
-		canvas.DrawRoundRect(bounds, colors.ControlHover, 5)
+	if !item.Disabled {
+		active := p.bench.popupIcon == item.Icon.Name
+		bg := widget.ColorTransparent
+		if item.Pressed || active {
+			bg = colors.ControlHover
+		} else if item.Hovered {
+			bg = colors.ControlFill
+		}
+		if !bg.IsTransparent() {
+			canvas.DrawRoundRect(bounds, bg, 4)
+		}
 	}
 	color := colors.OnSurface
 	if item.Disabled {
@@ -204,7 +293,7 @@ func (p actionToolbarPainter) PaintButtonItem(canvas widget.Canvas, item toolbar
 		badge := geometry.NewRect(bounds.Min.X+6, center-repositoryIconSize/2, repositoryIconSize, repositoryIconSize)
 		p.bench.repositoryIcon.draw(canvas, badge, item.Label)
 	} else {
-		icon.Draw(canvas, item.Icon, geometry.NewRect(bounds.Min.X+7, center-9, 18, 18), color)
+		icon.Draw(canvas, item.Icon, geometry.NewRect(bounds.Min.X+8, center-8, 16, 16), color)
 	}
 	chevron := geometry.NewRect(bounds.Max.X-19, center-7, 14, 14)
 	label := geometry.NewRect(bounds.Min.X+29, bounds.Min.Y, chevron.Min.X-bounds.Min.X-30, bounds.Height())
@@ -218,4 +307,7 @@ func (p actionToolbarPainter) PaintButtonItem(canvas widget.Canvas, item toolbar
 		canvas.PopClip()
 	}
 	icon.Draw(canvas, icon.ExpChevronDown, chevron, color)
+	if item.Focused && !item.Disabled {
+		canvas.StrokeRoundRect(bounds, colors.BorderFocus, 4, 1)
+	}
 }

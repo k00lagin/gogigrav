@@ -247,9 +247,11 @@ func (w *workbench) repositorySettings(path string) {
 	header := row(icons.repository(path), primitives.Expanded(primitives.VBox(w.text(filepath.Base(path)).Bold(), w.muted(path).FontSize(11).MaxLines(1).Ellipsis())))
 	mode := row(w.text("Icon"), primitives.Expanded(w.muted(current).MaxLines(1).Ellipsis()),
 		w.btn("Use automatic", button.TextOnly, override != "", func() { selectFile("") }))
-	content := primitives.VBox(w.text("Repository settings").Bold().FontSize(15), header, line(w), mode, compactInput(input), primitives.VBox(list).Height(190),
-		row(primitives.Expanded(w.muted("").ContentSignal(message).FontSize(11)), browse, w.btn("Close", button.TextOnly, true, func() { window.Close(ctx) }))).
-		Padding(14).Gap(6).CrossAlign(primitives.CrossAxisStretch)
+	content := primitives.VBox(
+		w.dialogHeader("Repository settings", func() { window.Close(ctx) }),
+		line(w), header, line(w), mode, compactInput(input), primitives.VBox(list).Height(190), line(w),
+		row(primitives.Expanded(w.muted("").ContentSignal(message).FontSize(11)), browse),
+	).Padding(16).Gap(8).CrossAlign(primitives.CrossAxisStretch)
 	keys := &choicePanelKeys{BoxWidget: content, focus: input, list: list, selection: index, scroll: scroll}
 	indexCtx, cancel := context.WithCancel(w.ctx)
 	window = dialog.New(dialog.ContentOnly(), dialog.Content(keys), dialog.MaxWidth(490), dialog.PainterOpt(w.paint.Dialog),

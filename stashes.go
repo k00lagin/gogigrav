@@ -66,7 +66,7 @@ func (w *workbench) stashCreateForm() {
 	}
 	input := w.input("Message (optional)", "", nil, submit)
 	panel := primitives.VBox(
-		w.text("Stash Changes").Bold().FontSize(15),
+		w.dialogHeader("Stash changes", func() { editor.Close(ctx) }),
 		line(w), w.muted("Message (optional)"), compactInput(input),
 		w.check("Include untracked files", true, true, func(on bool) {
 			untracked = on
@@ -138,8 +138,7 @@ func (w *workbench) stashDetails(stash repo.Stash) {
 	}
 	applyBtn := w.btn("Apply stash", button.Filled, true, restore("apply", "Apply"))
 	children := []widget.Widget{
-		row(primitives.Expanded(w.text(stash.Selector).Bold().FontSize(15)),
-			w.btn("×", button.TextOnly, true, closeDialog)),
+		w.dialogHeader(stash.Selector, closeDialog),
 		line(w),
 	}
 	if stash.Message != "" {
@@ -168,7 +167,6 @@ func (w *workbench) stashDetails(stash repo.Stash) {
 				editor.Close(ctx)
 			}),
 			primitives.Expanded(primitives.Box()),
-			w.btn("Close", button.TextOnly, true, closeDialog),
 		),
 	)
 	panel := primitives.VBox(children...).Width(520).Gap(8).Padding(16).CrossAlign(primitives.CrossAxisStretch)
@@ -190,7 +188,7 @@ func (w *workbench) stashBranchForm(stash repo.Stash) {
 	w.formDialog(formDialogOptions{
 		title:       "Branch from " + stash.Selector,
 		description: stash.Message,
-		submit:      "Create Branch",
+		submit:      "Create branch",
 		fields:      []*formField{branch},
 		onSubmit: func() (func(), error) {
 			name := strings.TrimSpace(branch.value)

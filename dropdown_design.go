@@ -92,24 +92,17 @@ func (w *workbench) newFilterInput(placeholder string, invalid func() bool, onCh
 		opts = append(opts, textfield.OnSubmit(onSubmit))
 	}
 	field = textfield.New(opts...)
-	clearBtn = button.New(
-		button.A11yHint("Clear search"),
-		button.SizeOpt(button.Small),
-		button.VariantOpt(button.TextOnly),
-		button.Disabled(w.busy),
-		button.PainterOpt(filterClearPainter{w.paint.Button}),
-		button.OnClick(func() {
-			field.SetText("")
-			syncClear(false)
-			if onChange != nil {
-				onChange("")
-			}
-			field.SetNeedsRedraw(true)
-			ctx := w.ui.Window().Context()
-			ctx.RequestFocus(field)
-			ctx.Invalidate()
-		}),
-	)
+	clearBtn = w.iconButton(icon.ExpClose, "Clear search", 22, 14, func() bool { return w.busy }, func() {
+		field.SetText("")
+		syncClear(false)
+		if onChange != nil {
+			onChange("")
+		}
+		field.SetNeedsRedraw(true)
+		ctx := w.ui.Window().Context()
+		ctx.RequestFocus(field)
+		ctx.Invalidate()
+	})
 
 	searchGlyph := primitives.VBox(icon.NewIcon(icon.ExpSearch, icon.Size(14), icon.Color(cs.OnSurfaceSecondary))).
 		Width(14).Height(14)
@@ -150,36 +143,6 @@ func (p filterFieldPainter) PaintTextField(canvas widget.Canvas, field *textfiel
 		caretColor = cs.Error
 	}
 	textfield.PaintCursor(canvas, field, caretColor, 0)
-}
-
-type filterClearPainter struct {
-	devtools.ButtonPainter
-}
-
-func (filterClearPainter) ButtonHeight(button.Size) float32             { return 20 }
-func (filterClearPainter) ButtonPadding(button.Size) (float32, float32) { return 10, 0 }
-func (filterClearPainter) ButtonRadius() float32                        { return 4 }
-
-func (p filterClearPainter) PaintButton(canvas widget.Canvas, s button.PaintState) {
-	if s.Bounds.IsEmpty() {
-		return
-	}
-	cs := p.Theme.Colors
-	if !s.Disabled && (s.Hovered || s.Pressed) {
-		bg := cs.ControlHover
-		if s.Pressed {
-			bg = bg.Lerp(widget.ColorBlack, 0.10)
-		}
-		canvas.DrawRoundRect(s.Bounds, bg, 4)
-	}
-	fg := cs.OnSurfaceSecondary
-	if s.Disabled {
-		fg = cs.OnSurfaceDisabled
-	} else if s.Hovered || s.Pressed {
-		fg = cs.OnSurface
-	}
-	center := s.Bounds.Center()
-	icon.Draw(canvas, icon.ExpClose, geometry.NewRect(center.X-6, center.Y-6, 12, 12), fg)
 }
 
 func (w *workbench) dropdownActionButton(glyph icon.IconData, label string, enabled bool, fn func()) *button.Widget {

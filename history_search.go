@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/textfield"
-	"github.com/gogpu/ui/geometry"
 	"github.com/gogpu/ui/icon"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
@@ -55,22 +53,18 @@ func (w *workbench) historySearchPanel() widget.Widget {
 		}), textfield.OnSubmit(func(string) { w.stepSearch(1) }),
 	)
 	control := func(glyph icon.IconData, hint string, disabled state.Signal[bool], action func()) widget.Widget {
-		return button.New(button.A11yHint(hint),
-			button.SizeOpt(button.Small), button.VariantOpt(button.TextOnly),
-			button.DisabledSignal(disabled), button.PainterOpt(searchButtonPainter{w.paint.Button, glyph}), button.OnClick(action))
+		return w.iconButtonSignal(glyph, hint, 22, 14, disabled, action)
 	}
 	return primitives.HBox(
 		primitives.VBox(icon.NewIcon(icon.ExpSearch, icon.Size(14), icon.Color(cs.OnSurfaceSecondary))).Width(14).Height(14),
 		primitives.Expanded(primitives.VBox(w.searchField).Height(26)),
 		w.muted("").FontSize(10).ContentSignal(w.searchSummary).MaxLines(1),
-		control(searchChevronUp, "Previous match (Shift+Enter)", w.searchDisabled, func() { w.stepSearch(-1) }),
+		control(icon.ExpChevronUp, "Previous match (Shift+Enter)", w.searchDisabled, func() { w.stepSearch(-1) }),
 		control(icon.ExpChevronDown, "Next match (Enter)", w.searchDisabled, func() { w.stepSearch(1) }),
 		control(icon.ExpClose, "Close search (Esc)", nil, w.closeSearch),
 	).MaxWidthValue(320).Height(28).PaddingXY(5, 0).Gap(2).Rounded(4).
 		Background(cs.ControlFill).BorderStyle(1, cs.Border).CrossAlign(primitives.CrossAxisCenter)
 }
-
-var searchChevronUp = icon.FromSVG("history-search-up", 16, "M3 10L8 5L13 10L12 11L8 7L4 11Z")
 
 type searchFieldPainter struct{ devtools.TextFieldPainter }
 
@@ -92,24 +86,6 @@ func (p searchFieldPainter) PaintTextField(canvas widget.Canvas, field *textfiel
 	}
 	canvas.DrawText(text, bounds, field.FontSize, color, false, widget.TextAlignLeft)
 	textfield.PaintCursor(canvas, field, cs.OnSurface, 0)
-}
-
-type searchButtonPainter struct {
-	devtools.ButtonPainter
-	glyph icon.IconData
-}
-
-func (searchButtonPainter) ButtonHeight(button.Size) float32             { return 22 }
-func (searchButtonPainter) ButtonPadding(button.Size) (float32, float32) { return 11, 0 }
-
-func (p searchButtonPainter) PaintButton(canvas widget.Canvas, state button.PaintState) {
-	p.ButtonPainter.PaintButton(canvas, state)
-	color := p.Theme.Colors.OnSurfaceSecondary
-	if state.Disabled {
-		color = p.Theme.Colors.OnSurfaceDisabled
-	}
-	center := state.Bounds.Center()
-	icon.Draw(canvas, p.glyph, geometry.NewRect(center.X-6, center.Y-6, 12, 12), color)
 }
 
 func (w *workbench) updateHistorySearch() {

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gogpu/ui/core/button"
 	"github.com/gogpu/ui/core/checkbox"
@@ -15,8 +16,11 @@ import (
 	"github.com/gogpu/ui/core/scrollview"
 	"github.com/gogpu/ui/core/splitview"
 	"github.com/gogpu/ui/core/textfield"
+	"github.com/gogpu/ui/geometry"
+	"github.com/gogpu/ui/icon"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/state"
+	"github.com/gogpu/ui/theme/devtools"
 	"github.com/gogpu/ui/widget"
 	"gogigrav/internal/repo"
 )
@@ -29,6 +33,86 @@ func (w *workbench) muted(s string) *primitives.TextWidget {
 }
 func (w *workbench) btn(s string, v button.Variant, enabled bool, fn func()) widget.Widget {
 	return button.New(button.TextOpt(s), button.VariantOpt(v), button.SizeOpt(button.Small), button.Disabled(!enabled || w.busy), button.OnClick(fn), button.PainterOpt(w.paint.Button))
+}
+
+func (w *workbench) iconButton(glyph icon.IconData, hint string, size, iconSize float32, disabled func() bool, fn func()) *button.Widget {
+	opts := []button.Option{
+		button.A11yHint(hint),
+		button.SizeOpt(button.Small),
+		button.VariantOpt(button.TextOnly),
+		button.OnClick(fn),
+		button.PainterOpt(squareIconButtonPainter{ButtonPainter: w.paint.Button, glyph: glyph, size: size, iconSize: iconSize, radius: 4}),
+	}
+	if disabled != nil {
+		opts = append(opts, button.DisabledFn(disabled))
+	} else {
+		opts = append(opts, button.Disabled(w.busy))
+	}
+	return button.New(opts...)
+}
+
+func (w *workbench) iconButtonSignal(glyph icon.IconData, hint string, size, iconSize float32, disabled state.Signal[bool], fn func()) *button.Widget {
+	return button.New(
+		button.A11yHint(hint),
+		button.SizeOpt(button.Small),
+		button.VariantOpt(button.TextOnly),
+		button.DisabledSignal(disabled),
+		button.OnClick(fn),
+		button.PainterOpt(squareIconButtonPainter{ButtonPainter: w.paint.Button, glyph: glyph, size: size, iconSize: iconSize, radius: 4}),
+	)
+}
+
+func (w *workbench) dialogCloseButton(onClose func()) *button.Widget {
+	return w.iconButton(icon.ExpClose, "Close", 28, 16, func() bool { return false }, onClose)
+}
+
+func (w *workbench) dialogHeader(title string, onClose func()) *primitives.BoxWidget {
+	return row(primitives.Expanded(w.text(title).Bold().FontSize(15)), w.dialogCloseButton(onClose))
+}
+
+func dropdownWidth(labels []string) float32 {
+	width := float32(72)
+	for _, option := range labels {
+		width = max(width, float32(utf8.RuneCountInString(option))*7+44)
+	}
+	return width
+}
+
+type squareIconButtonPainter struct {
+	devtools.ButtonPainter
+	glyph          icon.IconData
+	size, iconSize float32
+	radius         float32
+}
+
+func (p squareIconButtonPainter) ButtonHeight(button.Size) float32             { return p.size }
+func (p squareIconButtonPainter) ButtonPadding(button.Size) (float32, float32) { return p.size / 2, 0 }
+func (p squareIconButtonPainter) ButtonRadius() float32                        { return p.radius }
+
+func (p squareIconButtonPainter) PaintButton(canvas widget.Canvas, s button.PaintState) {
+	if s.Bounds.IsEmpty() {
+		return
+	}
+	cs := p.Theme.Colors
+	if !s.Disabled && (s.Hovered || s.Pressed) {
+		bg := cs.ControlHover
+		if s.Pressed {
+			bg = bg.Lerp(widget.ColorBlack, 0.10)
+		}
+		canvas.DrawRoundRect(s.Bounds, bg, p.radius)
+	}
+	fg := cs.OnSurfaceSecondary
+	if s.Disabled {
+		fg = cs.OnSurfaceDisabled
+	} else if s.Hovered || s.Pressed {
+		fg = cs.OnSurface
+	}
+	center := s.Bounds.Center()
+	half := p.iconSize / 2
+	icon.Draw(canvas, p.glyph, geometry.NewRect(center.X-half, center.Y-half, p.iconSize, p.iconSize), fg)
+	if s.Focused && !s.Disabled {
+		canvas.StrokeRoundRect(s.Bounds, cs.BorderFocus, p.radius, 1)
+	}
 }
 func (w *workbench) input(label, val string, change func(string), submit func(string)) *textfield.Widget {
 	opts := []textfield.Option{textfield.Placeholder(label), textfield.A11yLabel(label), textfield.InitialValue(val),
@@ -189,7 +273,7 @@ func (w *workbench) historyTable() *datatable.Widget {
 		i -= w.uncommittedRowCount()
 		if i == -1 {
 			if k == "description" {
-				return fmt.Sprintf("Uncommitted Changes (%d)", len(w.data.Files))
+				return fmt.Sprintf("Uncommitted changes (%d)", len(w.data.Files))
 			}
 			if k == "diff" {
 				return summaryText(w.data.WorkDiff)
@@ -266,7 +350,7 @@ func (w *workbench) showHistoryCommit(c repo.Commit, base, tip string) {
 }
 func (w *workbench) panel() widget.Widget {
 	cs := w.theme.Colors
-	title := "Uncommitted Changes"
+	title := "Uncommitted changes"
 	content := w.changesPanel(false)
 	if w.page == "commit" {
 		title = "Commit details"
@@ -320,7 +404,7 @@ func (w *workbench) changesPanel(inline bool) widget.Widget {
 	commit := func() {
 		message := w.drafts[w.path]
 		if strings.TrimSpace(message) == "" {
-			w.showError(fmt.Errorf("enter a commit message"))
+			w.showError(fmt.Errorf("Enter a commit message."))
 			return
 		}
 		path := w.path

@@ -3,7 +3,7 @@ package main
 import (
 	"slices"
 
-	"github.com/gogpu/ui/core/button"
+	"github.com/gogpu/ui/icon"
 	"github.com/gogpu/ui/primitives"
 	"github.com/gogpu/ui/widget"
 	"gogigrav/internal/repo"
@@ -56,15 +56,14 @@ func (w *workbench) closeInlineDetails() {
 
 func (w *workbench) inlinePanel() widget.Widget {
 	var content widget.Widget
-	title := "Working tree"
+	title := "Uncommitted changes"
 	if w.page == "commit" {
 		title = "Commit details"
 		content = w.commitPanel(true)
 	} else {
 		content = w.changesPanel(true)
 	}
-	closeButton := button.New(button.TextOpt("×"), button.A11yHint("Close details"), button.SizeOpt(button.Small),
-		button.VariantOpt(button.TextOnly), button.PainterOpt(w.paint.Button), button.OnClick(w.closeInlineDetails))
+	closeButton := w.iconButton(icon.ExpClose, "Close details", 24, 14, func() bool { return false }, w.closeInlineDetails)
 	header := row(primitives.Expanded(w.muted(title)), closeButton).Height(29).PaddingXY(10, 0)
 	details := primitives.VBox(line(w), header, line(w), primitives.Expanded(content), line(w)).
 		CrossAlign(primitives.CrossAxisStretch)

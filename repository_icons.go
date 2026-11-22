@@ -162,15 +162,28 @@ func decodeThumbnail(data []byte, ext string) (image.Image, error) {
 		if len(data) < 8 || string(data[:4]) != "icns" {
 			return nil, errors.New("invalid ICNS file")
 		}
+		const targetMinSize = repositoryIconSize * 2
 		var best []byte
+		bestDim := 0
 		for chunks := data[8:]; len(chunks) >= 8; {
 			n := int64(binary.BigEndian.Uint32(chunks[4:8]))
 			if n < 8 || n > int64(len(chunks)) {
 				break
 			}
 			part := chunks[8:n]
-			if bytes.HasPrefix(part, []byte("\x89PNG\r\n\x1a\n")) && (best == nil || len(part) < len(best)) {
-				best = part
+			if bytes.HasPrefix(part, []byte("\x89PNG\r\n\x1a\n")) {
+				if cfg, _, err := image.DecodeConfig(bytes.NewReader(part)); err == nil && cfg.Width > 0 && cfg.Height > 0 {
+					dim := max(cfg.Width, cfg.Height)
+					better := best == nil ||
+						(bestDim < targetMinSize && dim > bestDim) ||
+						(dim >= targetMinSize && bestDim >= targetMinSize && dim < bestDim)
+					if better {
+						best = part
+						bestDim = dim
+					}
+				} else if best == nil {
+					best = part
+				}
 			}
 			chunks = chunks[n:]
 		}

@@ -81,7 +81,15 @@ type toolbarTooltip struct {
 }
 
 func (t *toolbarTooltip) Layout(ctx widget.Context, c geometry.Constraints) geometry.Size {
-	size := c.Constrain(geometry.Sz(float32(utf8.RuneCountInString(t.text))*9+18, 30))
+	width := float32(utf8.RuneCountInString(t.text))*6.5 + 18
+	if provider, ok := ctx.(interface{ TextRasterizer() widget.TextRasterizer }); ok {
+		if r := provider.TextRasterizer(); r != nil {
+			if m, ok := r.Measure(t.text, widget.TextStyle{FontSize: 12}, 1); ok && m.Advance > 0 {
+				width = float32(m.Advance) + 18
+			}
+		}
+	}
+	size := c.Constrain(geometry.Sz(width, 26))
 	pos := popover.CalculatePosition(t.placement, t.anchor(), size, ctx.WindowSize(), 6)
 	t.SetBounds(geometry.FromPointSize(pos, size))
 	return size
@@ -90,7 +98,11 @@ func (t *toolbarTooltip) Layout(ctx widget.Context, c geometry.Constraints) geom
 func (t *toolbarTooltip) Draw(_ widget.Context, canvas widget.Canvas) {
 	bounds := t.Bounds()
 	width := min(bounds.Width(), canvas.MeasureText(t.text, 12, false)+18)
-	bounds.Max.X = bounds.Min.X + width
+	if t.placement == popover.BottomEnd || t.placement == popover.TopEnd {
+		bounds.Min.X = bounds.Max.X - width
+	} else {
+		bounds.Max.X = bounds.Min.X + width
+	}
 	canvas.PushClip(bounds)
 	t.painter.PaintTooltip(canvas, &popover.TooltipPaintState{Bounds: bounds, Text: t.text, Placement: t.placement})
 	canvas.PopClip()

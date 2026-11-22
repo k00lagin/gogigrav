@@ -99,7 +99,7 @@ func TestRepositoryPickerBrowsesAddsAndInitializes(t *testing.T) {
 	walkWidgets(menu.list, func(node widget.Widget) {
 		switch v := node.(type) {
 		case *icon.IconWidget:
-			if v.Data().Name == icon.Check.Name {
+			if v.Data().Name == icon.ExpCheck.Name {
 				check = v
 			}
 		case *repositoryBadge:

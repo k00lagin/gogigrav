@@ -172,18 +172,16 @@ func (w *workbench) historyColumnMenu(at geometry.Point) {
 		w.redraw()
 	}
 	for _, col := range historyColumns {
-		label := "✓  " + col.Title
-		if w.prefs.Columns.Hidden[col.Key] {
-			label = "    " + col.Title
-		}
-		items = append(items, menu.Item(label, "", func() {
+		key := col.Key
+		checked := !w.prefs.Columns.Hidden[key]
+		items = append(items, menu.ItemCheck(col.Title, "", checked, func() {
 			if w.prefs.Columns.Hidden == nil {
 				w.prefs.Columns.Hidden = make(map[string]bool)
 			}
-			w.prefs.Columns.Hidden[col.Key] = !w.prefs.Columns.Hidden[col.Key]
+			w.prefs.Columns.Hidden[key] = !w.prefs.Columns.Hidden[key]
 			apply()
 		}))
 	}
-	items = append(items, menu.Sep(), menu.Item("Reset Columns", "", func() { w.prefs.Columns = columnLayout{}; apply() }))
+	items = append(items, menu.Sep(), menu.Item("Reset columns", "", func() { w.prefs.Columns = columnLayout{}; apply() }))
 	menu.NewContextMenu(items, menu.ContextPainterOpt(w.paint.Menu)).Show(w.ui.Window().Context(), at)
 }

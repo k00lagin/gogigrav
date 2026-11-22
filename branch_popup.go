@@ -374,17 +374,28 @@ func (p branchCheckboxPainter) PaintCheckbox(canvas widget.Canvas, s checkbox.Pa
 			fg = cs.OnSurfaceDisabled
 		}
 		cx, cy := boxRect.Min.X, boxRect.Min.Y
-		p1 := geometry.Pt(cx+boxSize*0.20, cy+boxSize*0.52)
-		p2 := geometry.Pt(cx+boxSize*0.42, cy+boxSize*0.74)
-		p3 := geometry.Pt(cx+boxSize*0.80, cy+boxSize*0.30)
-		canvas.DrawLine(p1, p2, fg, 1.5)
-		canvas.DrawLine(p2, p3, fg, 1.5)
+		if s.Indeterminate && !s.Checked {
+			canvas.DrawLine(
+				geometry.Pt(cx+boxSize*0.22, cy+boxSize*0.50),
+				geometry.Pt(cx+boxSize*0.78, cy+boxSize*0.50),
+				fg, 1.5,
+			)
+		} else {
+			p1 := geometry.Pt(cx+boxSize*0.20, cy+boxSize*0.52)
+			p2 := geometry.Pt(cx+boxSize*0.42, cy+boxSize*0.74)
+			p3 := geometry.Pt(cx+boxSize*0.80, cy+boxSize*0.30)
+			canvas.DrawLine(p1, p2, fg, 1.5)
+			canvas.DrawLine(p2, p3, fg, 1.5)
+		}
 	} else {
 		border := cs.BorderStrong
 		if s.Disabled {
 			border = cs.OnSurfaceDisabled
 		}
 		canvas.StrokeRoundRect(boxRect.Expand(-0.75), border, boxRadius, 1.5)
+	}
+	if s.Focused && !s.Disabled {
+		canvas.StrokeRoundRect(boxRect.Expand(2), cs.BorderFocus, boxRadius+1, 1)
 	}
 	if s.Label != "" {
 		fg := cs.OnSurface

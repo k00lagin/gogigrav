@@ -15,7 +15,10 @@ import (
 
 const historyDescription = "Description"
 
-var historyTag = icon.FromSVG("history-tag", 12, "M1 1 H6 L11 6 L6 11 L1 6 Z M2 2 V5.6 L6 9.6 L9.6 6 L5.6 2 Z M3 3 H4.5 V4.5 H3 Z")
+var historyTag = icon.FromSVGXML("history-tag", []byte(`<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M2.5 3.5C2.5 2.94772 2.94772 2.5 3.5 2.5H7.29289C7.55811 2.5 7.81246 2.60536 8 2.79289L13.2929 8.08579C13.6834 8.47631 13.6834 9.10948 13.2929 9.5L9.5 13.2929C9.10948 13.6834 8.47631 13.6834 8.08579 13.2929L2.79289 8C2.60536 7.81246 2.5 7.55811 2.5 7.29289V3.5Z" stroke="#6C707E" stroke-linejoin="round"/>
+<circle cx="5.5" cy="5.5" r="1" fill="#6C707E"/>
+</svg>`))
 
 type historyPainter struct {
 	devtools.DataTablePainter
@@ -104,17 +107,19 @@ func paintChangeSummary(canvas widget.Canvas, bounds geometry.Rect, summary repo
 	x := bounds.Min.X + 8
 	for i, part := range []string{fmt.Sprint(summary.Files), fmt.Sprintf("+%d", summary.Added), fmt.Sprintf("−%d", summary.Deleted)} {
 		width := canvas.MeasureText(part, 11, false)
-		text := geometry.NewRect(x, bounds.Center().Y-8, width+2, 16)
 		color := cs.OnSurface
 		switch i {
 		case 0:
-			canvas.DrawRoundRect(geometry.NewRect(x-3, text.Min.Y, width+8, 16), cs.Border, 3)
+			pill := geometry.NewRect(x-3, bounds.Center().Y-8, width+8, 16)
+			canvas.DrawRoundRect(pill, cs.Border, 3)
+			canvas.DrawText(part, pill, 11, color, false, widget.TextAlignCenter)
 		case 1:
-			color = cs.Success
+			text := geometry.NewRect(x, bounds.Center().Y-8, width+2, 16)
+			canvas.DrawText(part, text, 11, cs.Success, false, widget.TextAlignLeft)
 		case 2:
-			color = cs.Error
+			text := geometry.NewRect(x, bounds.Center().Y-8, width+2, 16)
+			canvas.DrawText(part, text, 11, cs.Error, false, widget.TextAlignLeft)
 		}
-		canvas.DrawText(part, text, 11, color, false, widget.TextAlignLeft)
 		x += width + 10
 	}
 }
@@ -131,7 +136,7 @@ func (w *workbench) historyRefs(c repo.Commit) []historyRef {
 	var labels []historyRef
 	current := repo.LocalRefPrefix + w.data.CurrentBranch()
 	if c.Hash == w.data.Head && w.data.CurrentBranch() == "" {
-		labels = append(labels, historyRef{text: "HEAD", glyph: icon.Check, current: true})
+		labels = append(labels, historyRef{text: "HEAD", glyph: icon.ExpCheck, current: true})
 	}
 	absorbed := make(map[string]bool)
 	for _, ref := range refs {
@@ -141,7 +146,7 @@ func (w *workbench) historyRefs(c repo.Commit) []historyRef {
 		name := shortRef(ref.Name)
 		label := historyRef{text: name, ref: ref.Name, glyph: branchIcon, current: ref.Name == current}
 		if label.current {
-			label.glyph = icon.Check
+			label.glyph = icon.ExpCheck
 		}
 		if w.filter.Remote {
 			for _, remote := range refs {

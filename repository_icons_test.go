@@ -1,7 +1,12 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
 	"slices"
@@ -211,4 +216,44 @@ func TestToolbarShowsCurrentRepositoryIcon(t *testing.T) {
 	}
 	open(first)
 	check("custom.svg", 20)
+}
+
+func TestICNSSelectsHighResolutionRendition(t *testing.T) {
+	makePNG := func(size int, c color.NRGBA) []byte {
+		img := image.NewNRGBA(image.Rect(0, 0, size, size))
+		for y := range size {
+			for x := range size {
+				img.SetNRGBA(x, y, c)
+			}
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			t.Fatal(err)
+		}
+		return buf.Bytes()
+	}
+	small := makePNG(8, color.NRGBA{R: 255, A: 255})
+	high := makePNG(64, color.NRGBA{G: 200, A: 255})
+	var icns bytes.Buffer
+	icns.WriteString("icns")
+	_ = binary.Write(&icns, binary.BigEndian, uint32(8+8+len(small)+8+len(high)))
+	for _, entry := range []struct {
+		typ  string
+		data []byte
+	}{{"icp4", small}, {"icp6", high}} {
+		icns.WriteString(entry.typ)
+		_ = binary.Write(&icns, binary.BigEndian, uint32(8+len(entry.data)))
+		icns.Write(entry.data)
+	}
+	got, err := decodeThumbnail(icns.Bytes(), ".icns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Bounds().Dx() != repositoryIconSize || got.Bounds().Dy() != repositoryIconSize {
+		t.Fatalf("decoded ICNS size = %v, want %d×%d", got.Bounds().Size(), repositoryIconSize, repositoryIconSize)
+	}
+	_, g, _, _ := got.At(repositoryIconSize/2, repositoryIconSize/2).RGBA()
+	if g == 0 {
+		t.Fatal("decodeThumbnail chose the 8×8 red chunk instead of the higher-resolution green rendition")
+	}
 }
